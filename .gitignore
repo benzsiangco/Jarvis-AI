@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+app/frontend/node_modules/
+app/backend/node_modules/
+
+# Build outputs
+app/frontend/dist/
+dist/
+app/tauri/target/
+
+# Models & large binaries
+models/
+llama-cpp/
+app/tauri/resources/llama-cpp/
+app/tauri/binaries/
+
+# Runtime data
+app/backend/data/
+runtime/
+
+# Secrets & local config
+app/backend/app-settings.json
+*.key
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Bun
+bun.lockb
+
+# Tauri gen (auto-generated)
+app/tauri/gen/

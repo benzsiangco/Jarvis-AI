@@ -1,0 +1,77 @@
+{
+  "productName": "Jarvis AI",
+  "version": "1.0.0",
+  "identifier": "com.jarvis.ai-ide",
+  "build": {
+    "beforeDevCommand": "",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Jarvis AI",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1000,
+        "minHeight": 700,
+        "decorations": false,
+        "resizable": true,
+        "transparent": false,
+        "backgroundColor": "#0a0a0f"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "../frontend/public/favicon.ico",
+      "../frontend/public/logo.png"
+    ],
+    "resources": [
+      "resources/llama-cpp/**/*"
+    ],
+    "externalBin": [
+      "binaries/server"
+    ],
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "languages": [
+          "English"
+        ],
+        "template": "nsis/installer.nsi"
+      }
+    },
+    "publisher": "Benz Siangco",
+    "copyright": "(c) Benz Siangco"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_YOUR_PUBLIC_KEY",
+      "endpoints": [
+        "https://github.com/YOURUSERNAME/jarvis-ai/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

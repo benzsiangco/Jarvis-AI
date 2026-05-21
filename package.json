@@ -1,0 +1,25 @@
+{
+  "name": "jarvis",
+  "version": "1.0.0",
+  "description": "Local AI Coding IDE — Offline, GGUF-powered, OpenCode-inspired",
+  "author": "Benz Siangco",
+  "private": true,
+  "scripts": {
+    "dev:frontend": "cd app/frontend && npm run dev",
+    "dev:backend": "cd app/backend && bun run server.js",
+    "dev:web": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"cyan,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev": "node scripts/dev.mjs",
+    "dev:tauri": "cd app/tauri && npx tauri dev",
+    "install:all": "cd app/frontend && npm install && cd ../backend && bun install",
+    "build:frontend": "cd app/frontend && npx vite build",
+    "build:backend": "cd app/backend && bun build --compile --windows-hide-console --windows-title=\"Jarvis Backend\" --windows-publisher=\"Benz Siangco\" --outfile=../../dist/backend/server server.js",
+    "prep:tauri": "npm run build:frontend && npm run build:backend && node app/tauri/scripts/prepare.mjs",
+    "build": "npm run prep:tauri && cd app/tauri && npx tauri build",
+    "start": "start \"\" \"C:\\Users\\Yasuo\\AppData\\Local\\Jarvis AI\\jarvis.exe\""
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/cli": "^2.11.2",
+    "concurrently": "^9.1.0"
+  }
+}

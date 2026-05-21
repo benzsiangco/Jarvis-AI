@@ -1,0 +1,929 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Voice Mode
+   Fullscreen immersive voice assistant. Reuses existing theme tokens
+   (cyan accent, glass surfaces) and provides layout for the ArcReactor.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.vm-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #04060a;
+  color: var(--text-primary);
+  animation: vm-fade-in .35s ease-out;
+}
+
+/* Cinematic backdrop: deep navy → black radial */
+.vm-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(60% 50% at 50% 45%, rgba(6, 182, 212, .07) 0%, rgba(6, 182, 212, 0) 70%),
+    radial-gradient(80% 80% at 50% 50%, rgba(10, 14, 24, 1) 0%, #04060a 80%);
+  pointer-events: none;
+}
+
+.vm-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 90% at 50% 50%, transparent 55%, rgba(0, 0, 0, .6) 100%);
+}
+
+.vm-top {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+.vm-bottom {
+  position: absolute;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+/* Status + Response info block — sits just above the controls, never overlaps */
+.vm-info {
+  position: absolute;
+  bottom: 130px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: min(720px, calc(100vw - 64px));
+  pointer-events: none;
+  /* Hard cap so it never grows into the controls */
+  max-height: calc(100vh - 320px);
+}
+
+.vm-info > * {
+  pointer-events: auto;
+}
+
+/* Status pill — slimmer, more refined */
+.vm-status {
+  padding: 5px 12px;
+  font-size: 10.5px;
+  letter-spacing: .08em;
+}
+
+/* ESC interrupt hint */
+.vm-esc-hint {
+  color: rgba(251, 191, 36, .75);
+  text-transform: none;
+  letter-spacing: .04em;
+  font-weight: 500;
+}
+
+/* Subtitle on/off toggle inside the status pill */
+.vm-subtitle-toggle {
+  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(255, 255, 255, .06);
+  color: rgba(226, 232, 240, .55);
+  transition: all .15s ease;
+}
+
+.vm-subtitle-toggle:hover {
+  background: rgba(255, 255, 255, .08);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, .12);
+}
+
+.vm-subtitle-toggle-on {
+  background: rgba(34, 211, 238, .12);
+  border-color: rgba(34, 211, 238, .25);
+  color: #22d3ee;
+}
+
+.vm-subtitle-toggle-on:hover {
+  background: rgba(34, 211, 238, .18);
+  border-color: rgba(34, 211, 238, .35);
+}
+
+/* Reasoning panel — top-right corner, out of the reactor's way */
+.vm-reasoning {
+  position: absolute;
+  top: 64px;
+  right: 24px;
+  z-index: 3;
+  width: min(360px, calc(100vw - 48px));
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: rgba(13, 17, 23, .72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  padding: 8px 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .35);
+  scrollbar-width: thin;
+  opacity: 0;
+  transform: translateY(-8px);
+  animation: vm-fade-in-down .4s ease-out forwards;
+  animation-delay: .15s;
+}
+
+.vm-reasoning:has(.tp-root:empty),
+.vm-reasoning:empty {
+  display: none;
+}
+
+.vm-reasoning .tp-root {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+/* Tool calls panel — top-left mirror of the reasoning panel */
+.vm-tools-host {
+  position: absolute;
+  top: 64px;
+  left: 24px;
+  z-index: 3;
+  width: min(360px, calc(100vw - 48px));
+  max-height: calc(100vh - 200px);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vm-tools-host > * { pointer-events: auto; }
+
+/* ─── Voice Sub-Agents ────────────────────────────────────────────── */
+.vm-subagents {
+  border: 1px solid rgba(124, 109, 240, .22);
+  border-radius: 12px;
+  background: rgba(13, 17, 23, .72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .35);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-8px);
+  animation: vm-fade-in-down .4s ease-out forwards;
+  animation-delay: .2s;
+}
+
+.vm-subagents-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, .04);
+  background: rgba(0, 0, 0, .18);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, .68);
+}
+
+.vm-subagents-header svg { color: #a78bfa; }
+
+.vm-subagents-count {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(124, 109, 240, .15);
+  color: #a78bfa;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.vm-subagents-list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scrollbar-width: thin;
+}
+
+/* ─── Agent card ──────────────────────────────────────────────────── */
+.vm-agent-card {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .04);
+  background: rgba(255, 255, 255, .015);
+  animation: vm-tool-in .25s ease-out;
+}
+
+.vm-agent-running { border-color: rgba(124, 109, 240, .25); background: rgba(124, 109, 240, .04); }
+.vm-agent-done    { border-color: rgba(74, 222, 128, .18); }
+.vm-agent-error   { border-color: rgba(248, 113, 113, .2); background: rgba(248, 113, 113, .03); }
+
+.vm-agent-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.vm-agent-header:hover { background: rgba(255, 255, 255, .025); }
+
+.vm-agent-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
+.vm-agent-running .vm-agent-icon { color: #a78bfa; }
+.vm-agent-done    .vm-agent-icon { color: #4ade80; }
+.vm-agent-error   .vm-agent-icon { color: #f87171; }
+
+.vm-agent-spin { animation: vm-spin .8s linear infinite; }
+@keyframes vm-spin { to { transform: rotate(360deg); } }
+
+.vm-agent-task {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(226, 232, 240, .88);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vm-agent-toggle { color: rgba(148, 163, 184, .55); flex-shrink: 0; }
+
+/* Live step indicator */
+.vm-agent-live-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 6px;
+  font-size: 10px;
+  color: rgba(148, 163, 184, .75);
+  font-family: var(--font-mono);
+}
+
+.vm-agent-step-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.vm-agent-step-tool {
+  font-weight: 600;
+  color: rgba(226, 232, 240, .85);
+  flex-shrink: 0;
+}
+
+.vm-agent-step-args {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(148, 163, 184, .65);
+}
+
+/* Expanded body */
+.vm-agent-body {
+  border-top: 1px solid rgba(255, 255, 255, .04);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.vm-agent-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: rgba(148, 163, 184, .75);
+  background: rgba(255, 255, 255, .01);
+}
+
+.vm-agent-step-running { background: rgba(124, 109, 240, .06); }
+.vm-agent-step-failed  { background: rgba(248, 113, 113, .05); }
+
+.vm-agent-answer {
+  margin-top: 4px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: rgba(74, 222, 128, .05);
+  border: 1px solid rgba(74, 222, 128, .12);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vm-agent-error .vm-agent-answer {
+  background: rgba(248, 113, 113, .05);
+  border-color: rgba(248, 113, 113, .15);
+}
+
+.vm-agent-answer-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #4ade80;
+}
+
+.vm-agent-error .vm-agent-answer-label { color: #f87171; }
+
+.vm-agent-answer-text {
+  font-size: 10.5px;
+  color: rgba(226, 232, 240, .85);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.vm-tools {
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: rgba(13, 17, 23, .72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .35);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-8px);
+  animation: vm-fade-in-down .4s ease-out forwards;
+  animation-delay: .15s;
+}
+
+.vm-tools-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, .04);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, .68);
+}
+
+.vm-tools-header svg { color: rgba(34, 211, 238, .7); }
+
+.vm-tools-count {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(34, 211, 238, .12);
+  color: #22d3ee;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.vm-tools-list {
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scrollbar-width: thin;
+}
+
+/* ─── Tool card ───────────────────────────────────────────────────────── */
+.vm-tool-card {
+  border: 1px solid rgba(255, 255, 255, .04);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .015);
+  overflow: hidden;
+  transition: border-color .15s, background .15s;
+  animation: vm-tool-in .25s ease-out;
+}
+
+.vm-tool-card:hover { border-color: rgba(255, 255, 255, .08); }
+
+.vm-tool-running {
+  border-color: rgba(96, 165, 250, .22);
+  background: rgba(96, 165, 250, .04);
+}
+
+.vm-tool-failed {
+  border-color: rgba(248, 113, 113, .22);
+  background: rgba(248, 113, 113, .04);
+}
+
+.vm-tool-complete .vm-tool-icon { color: rgba(74, 222, 128, .85); }
+.vm-tool-running  .vm-tool-icon { color: #60a5fa; }
+.vm-tool-failed   .vm-tool-icon { color: #f87171; }
+
+.vm-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-size: 11.5px;
+  color: rgba(226, 232, 240, .82);
+  background: transparent;
+  border: 0;
+}
+
+.vm-tool-row:disabled { cursor: default; }
+
+.vm-tool-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .025);
+}
+
+.vm-tool-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.vm-tool-label {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: rgba(226, 232, 240, .92);
+  font-size: 11px;
+}
+
+.vm-tool-summary {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: rgba(148, 163, 184, .8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vm-tool-check {
+  flex-shrink: 0;
+  color: rgba(74, 222, 128, .55);
+}
+
+.vm-tool-toggle {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: rgba(148, 163, 184, .55);
+}
+
+.vm-tool-preview {
+  border-top: 1px solid rgba(255, 255, 255, .04);
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, .2);
+  animation: vm-fade-in .2s ease-out;
+}
+
+.vm-tool-pre {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: rgba(200, 202, 212, .9);
+  white-space: pre-wrap;
+  word-break: break-all;
+  scrollbar-width: thin;
+}
+
+.vm-tool-list-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: rgba(200, 202, 212, .85);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.vm-tool-list-items code {
+  font-family: var(--font-mono);
+  color: rgba(34, 211, 238, .85);
+  background: transparent;
+  font-size: 10.5px;
+}
+
+.vm-tool-empty {
+  font-style: italic;
+  color: rgba(148, 163, 184, .55);
+  font-size: 11px;
+}
+
+.vm-tool-more {
+  display: block;
+  font-size: 10px;
+  color: rgba(148, 163, 184, .55);
+  font-style: italic;
+}
+
+@keyframes vm-tool-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes vm-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes vm-fade-in-down {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Response subtitle — clean, readable, scrolls when long */
+.vm-response {
+  width: 100%;
+  max-height: 160px;  /* tighter cap so it never reaches the controls */
+  border: 1px solid rgba(34, 211, 238, .14);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(6, 182, 212, .04), rgba(6, 182, 212, .015));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, .35),
+    0 0 0 1px rgba(34, 211, 238, .04) inset;
+  overflow: hidden;
+  animation: vm-response-in .35s ease-out;
+}
+
+.vm-response-inner {
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 14px 20px;
+  scrollbar-width: thin;
+}
+
+.vm-response p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: rgba(226, 232, 240, .94);
+  font-weight: 400;
+  letter-spacing: .005em;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Greeting text — slightly larger, more cinematic */
+.vm-greeting {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(34, 211, 238, .92);
+  font-weight: 500;
+  letter-spacing: .02em;
+  text-align: center;
+  animation: vm-fade-in .5s ease-out;
+}
+
+/* Compact markdown tweaks for the voice subtitle */
+.vm-response .markdown-body { font-size: 12.5px; line-height: 1.65; }
+.vm-response .markdown-body > *:first-child { margin-top: 0; }
+.vm-response .markdown-body > *:last-child  { margin-bottom: 0; }
+.vm-response .markdown-body p { margin-bottom: 8px; }
+.vm-response .markdown-body h1,
+.vm-response .markdown-body h2,
+.vm-response .markdown-body h3 { margin: 12px 0 6px; }
+.vm-response .markdown-body ul,
+.vm-response .markdown-body ol { margin: 6px 0 8px 18px; }
+.vm-response .markdown-body .md-code-block { margin: 8px 0; }
+
+/* Streaming cursor — blinks while tokens flow in */
+.vm-response-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  margin-left: 3px;
+  background: rgba(34, 211, 238, .9);
+  vertical-align: text-bottom;
+  animation: vm-cursor-blink .9s steps(2, end) infinite;
+  box-shadow: 0 0 6px rgba(34, 211, 238, .55);
+}
+
+@keyframes vm-cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes vm-response-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.vm-stage {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+/* Hint shown below reactor when not yet activated */
+.vm-activate-hint {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: rgba(34, 211, 238, .5);
+  animation: vm-pulse 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.vm-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  color: rgba(226, 232, 240, .72);
+  text-transform: uppercase;
+}
+
+.vm-status-text  { color: rgba(226, 232, 240, .85); }
+.vm-status-model { color: rgba(94, 99, 112, .9); text-transform: none; letter-spacing: 0; }
+
+.vm-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  box-shadow: 0 0 6px transparent;
+}
+.vm-status-idle      { background: rgba(34, 211, 238, .8);  box-shadow: 0 0 8px rgba(34, 211, 238, .55); }
+.vm-status-listening { background: rgba(74, 222, 128, .9);  box-shadow: 0 0 10px rgba(74, 222, 128, .6); animation: vm-pulse 1.1s ease-in-out infinite; }
+.vm-status-thinking  { background: rgba(167, 139, 250, .9); box-shadow: 0 0 10px rgba(167, 139, 250, .6); animation: vm-pulse .8s ease-in-out infinite; }
+.vm-status-speaking  { background: rgba(34, 211, 238, .95); box-shadow: 0 0 12px rgba(34, 211, 238, .7);  animation: vm-pulse .55s ease-in-out infinite; }
+.vm-status-offline   { background: rgba(94, 99, 112, .8); }
+
+/* Inline mic meter inside the status pill — replaces the separate bar */
+.vm-mic-meter {
+  position: relative;
+  width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,.08);
+  overflow: hidden;
+  margin-left: 4px;
+}
+.vm-mic-fill {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: linear-gradient(to right, rgba(74,222,128,.9), rgba(34,211,238,.9));
+  transition: width 60ms linear;
+}
+
+/* ─── Controls ────────────────────────────────────────────────────────── */
+.vm-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--glass-shadow);
+}
+
+.vm-ctrl-btn {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .03);
+  border: 1px solid rgba(255, 255, 255, .05);
+  color: rgba(226, 232, 240, .65);
+  transition: all .15s ease;
+}
+
+.vm-ctrl-btn:hover {
+  background: rgba(255, 255, 255, .07);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, .1);
+}
+
+.vm-ctrl-btn-active {
+  background: rgba(124, 109, 240, .14);
+  border-color: rgba(124, 109, 240, .3);
+  color: #c4b5fd;
+}
+
+.vm-ctrl-btn-primary {
+  width: 44px;
+  height: 44px;
+  background: linear-gradient(135deg, rgba(6, 182, 212, .9), rgba(20, 184, 166, .9));
+  border-color: rgba(34, 211, 238, .35);
+  color: #fff;
+  box-shadow: 0 0 18px rgba(6, 182, 212, .35), 0 0 0 1px rgba(34, 211, 238, .25) inset;
+}
+
+.vm-ctrl-btn-primary:hover {
+  transform: scale(1.04);
+  box-shadow: 0 0 26px rgba(6, 182, 212, .55), 0 0 0 1px rgba(34, 211, 238, .35) inset;
+}
+
+.vm-ctrl-btn-disabled,
+.vm-ctrl-btn:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ─── Mode Switcher ───────────────────────────────────────────────────── */
+.mode-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, .4);
+}
+
+.mode-switcher-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: rgba(226, 232, 240, .55);
+  transition: all .15s ease;
+}
+
+.mode-switcher-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, .04);
+}
+
+.mode-switcher-btn-active {
+  background: rgba(6, 182, 212, .12);
+  color: #22d3ee;
+  box-shadow: 0 0 0 1px rgba(6, 182, 212, .25) inset, 0 0 14px rgba(6, 182, 212, .18);
+}
+
+/* In-app (non-voice) variant: lives in the existing chat workspace.
+   Floats top-center over the chat area without disturbing layout. */
+.app-mode-switcher-host {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  pointer-events: none;
+}
+
+.app-mode-switcher-host .mode-switcher {
+  pointer-events: auto;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────── */
+@keyframes vm-fade-in {
+  from { opacity: 0; transform: scale(.985); }
+  to   { opacity: 1; transform: scale(1);    }
+}
+
+@keyframes vm-pulse {
+  0%, 100% { opacity: 1;   }
+  50%      { opacity: .35; }
+}
+
+/* Reduced-motion respect */
+@media (prefers-reduced-motion: reduce) {
+  .vm-status-dot {
+    animation: none !important;
+  }
+}
+
+
+/* Diagnostic strip showing the most recent Whisper transcription so users
+   can verify STT is actually working even when wake-word fails. */
+.vm-last-heard {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-top: 8px; padding: 5px 10px; border-radius: 999px;
+  background: rgba(0,0,0,.35);
+  border: 1px solid rgba(255,255,255,.05);
+  font-size: 11px; color: rgba(226,232,240,.7);
+  max-width: 600px;
+  animation: vm-fade-in .2s ease-out;
+}
+.vm-last-heard-tag {
+  font-size: 9px; font-weight: 700; letter-spacing: .08em;
+  padding: 2px 6px; border-radius: 4px;
+}
+.vm-last-heard-tag.accepted {
+  color: #4ade80; background: rgba(74,222,128,.1);
+  border: 1px solid rgba(74,222,128,.25);
+}
+.vm-last-heard-tag.ignored {
+  color: #fbbf24; background: rgba(251,191,36,.1);
+  border: 1px solid rgba(251,191,36,.25);
+}
+.vm-last-heard-text {
+  font-style: italic;
+  font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@keyframes vm-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+
+/* Mic meter living inside the bottom controls bar — sits to the right of
+   the buttons so the area above the controls stays uncluttered. */
+.vm-mic-meter-inline {
+  width: 80px;
+  height: 5px;
+  margin-left: 8px;
+  align-self: center;
+  background: rgba(255,255,255,.07);
+}
+
+/* Status dot — execute / error states */
+.vm-status-executing { background: rgba(34,197,94,.95); box-shadow: 0 0 12px rgba(34,197,94,.7); animation: vm-pulse .55s ease-in-out infinite; }
+.vm-status-error     { background: rgba(239,68,68,.95); box-shadow: 0 0 12px rgba(239,68,68,.7);  animation: vm-pulse .8s  ease-in-out infinite; }
+
+
+/* Controls wrapper — buttons on top, meter+label below */
+.vm-controls-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Meter row: bar + state label side by side */
+.vm-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 260px;
+}
+.vm-meter-bar {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,.08);
+  overflow: hidden;
+}
+.vm-meter-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: rgba(34,211,238,.7);
+  white-space: nowrap;
+  min-width: 52px;
+  text-align: right;
+}

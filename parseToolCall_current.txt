@@ -1,0 +1,148 @@
+﻿
+
+// â”€â”€ Tool Call Parser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+function parseToolCall(text) {
+  if (!text) return null;
+
+  // 1. Native Gemma format: <tool_call>call:TOOL { ...args... }
+  const nativeMatch = text.match(/(?:<\|?tool_call\|?>?)call:\s*(\w+)\s*(\{[\s\S]*?\})/m);
+  if (nativeMatch) {
+    const tool = nativeMatch[1];
+    const args = tryParseJSON(nativeMatch[2]);
+    if (args && TOOL_NAMES.includes(tool)) return { tool, args };
+  }
+
+  // 2. call:TOOL { ... } without prefix
+  const shortMatch = text.match(/call:\s*(\w+)\s*(\{[\s\S]*?\})/m);
+  if (shortMatch) {
+    const tool = shortMatch[1];
+    const args = tryParseJSON(shortMatch[2]);
+    if (args && TOOL_NAMES.includes(tool)) return { tool, args };
+  }
+
+  // 3. Bare "TOOL { ...args... }" â€” the model often skips the call: prefix
+  for (const tool of TOOL_NAMES) {
+    const re = new RegExp(`\\b${tool}\\s*(\\{)`);
+    const m = text.match(re);
+    if (!m) continue;
+    const start = m.index + m[0].length - 1;
+    const block = extractBalancedJson(text, start);
+    if (!block) continue;
+    const args = tryParseJSON(block);
+    if (args && typeof args === 'object') return { tool, args };
+  }
+
+  // 4. Standard JSON format: { "tool": "...", "args": { ... } }
+  const objects = extractAllJsonObjects(text);
+  for (const obj of objects) {
+    const parsed = tryParseJSON(obj);
+    if (!parsed) continue;
+
+    if (parsed.tool && TOOL_NAMES.includes(parsed.tool)) {
+      // Correct format: has "args"
+      if (parsed.args && typeof parsed.args === 'object') {
+        return { tool: parsed.tool, args: parsed.args };
+      }
+
+      // Model used wrong key names â€” normalize to args
+      // e.g. {"tool":"runTerminal","input":"date"} or {"tool":"runTerminal","command":"date"}
+      const normalized = normalizeToolArgs(parsed.tool, parsed);
+      if (normalized) return { tool: parsed.tool, args: normalized };
+    }
+
+    // Bare-form fallback: { "writeFile": {...} }
+    for (const tool of TOOL_NAMES) {
+      if (parsed[tool] && typeof parsed[tool] === 'object') {
+        return { tool, args: parsed[tool] };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * When the model outputs wrong key names (e.g. "input", "command", "query"
+ * at the top level instead of nested under "args"), normalize them.
+ */
+function normalizeToolArgs(tool, parsed) {
+  // Strip known non-arg keys
+  const skip = new Set(['tool', 'args']);
+  const rest = Object.fromEntries(Object.entries(parsed).filter(([k]) => !skip.has(k)));
+  if (Object.keys(rest).length === 0) return null;
+
+  // Per-tool normalization of common wrong key names
+  switch (tool) {
+    case 'runTerminal': {
+      const cmd = rest.command || rest.input || rest.cmd || rest.run || rest.exec;
+      if (cmd) return { command: String(cmd) };
+      break;
+    }
+    case 'readFile':
+    case 'listFiles':
+    case 'openFolder': {
+      const p = rest.path || rest.file || rest.input || rest.filename;
+      if (p) return { path: String(p) };
+      break;
+    }
+    case 'writeFile': {
+      const p = rest.path || rest.file;
+      const c = rest.content || rest.text || rest.data || rest.input;
+      if (p) return { path: String(p), content: String(c || '') };
+      break;
+    }
+    case 'searchCode':
+    case 'searchInternet': {
+      const q = rest.query || rest.input || rest.search || rest.q;
+      if (q) return { query: String(q), ...(rest.maxResults ? { maxResults: rest.maxResults } : {}) };
+      break;
+    }
+    case 'webFetch': {
+      const u = rest.url || rest.input || rest.link;
+      if (u) return { url: String(u) };
+      break;
+    }
+    case 'rememberFact': {
+      const c = rest.content || rest.input || rest.fact || rest.text;
+      if (c) return { content: String(c) };
+      break;
+    }
+    case 'recallMemory': {
+      const q = rest.query || rest.input || rest.search;
+      return { query: q ? String(q) : undefined };
+    }
+    case 'forgetFact': {
+      const id = rest.id || rest.input;
+      if (id) return { id: String(id) };
+      break;
+    }
+    case 'patchFile': {
+      const p = rest.path || rest.file;
+      const d = rest.diff || rest.patch || rest.input;
+      if (p && d) return { path: String(p), diff: String(d) };
+      break;
+    }
+    case 'spawnAgent': {
+      const t = rest.task || rest.input;
+      if (t) return { task: String(t), context: rest.context || '' };
+      break;
+    }
+    case 'todoList': {
+      const a = rest.action || rest.input || 'list';
+      return { action: String(a), text: rest.text, id: rest.id };
+    }
+  }
+
+  // Generic fallback: if there's only one extra key, treat its value as the primary arg
+  if (Object.keys(rest).length === 1) {
+    const [k, v] = Object.entries(rest)[0];
+    return { [k]: v };
+  }
+
+  return rest;
+}
+
+/**
+ * Scan from `start` (which must point at '{') and return the substring up to
+ * and including the matching '}'. Counts braces inside string literals
+ * properly so quoted braces don't unbalance the match.

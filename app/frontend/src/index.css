@@ -1,0 +1,8 @@
+@import "tailwindcss";
+@import "./styles/base.css";
+@import "./styles/components.css";
+@import "./styles/voiceMode.css";
+
+/* Voice Mode integration: makes app-center the positioning context for
+   the floating in-app ModeSwitcher pill. No layout impact. */
+.app-center { position: relative; }
