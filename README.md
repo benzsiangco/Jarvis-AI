@@ -1,110 +1,171 @@
-# Gemma4 IDE — Local AI Coding IDE
+# JARVIS AI — Local AI IDE
 
-A fully offline, GGUF-powered coding IDE built with Electron, React, Monaco Editor, and llama.cpp.
+> *"Just A Rather Very Intelligent System"*
 
-## Prerequisites
+A fully offline, GGUF-powered AI coding assistant and IDE built with Tauri, React, Monaco Editor, Bun, and llama.cpp. Runs entirely on your machine — no API keys, no cloud, no data leaving your device.
 
-- [Node.js](https://nodejs.org/) >= 18
-- [Bun](https://bun.sh/) >= 1.0
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) — `llama-server` binary
-- A GGUF model (e.g. Gemma4, Qwen, etc.)
-
-> A pre-built llama.cpp zip for Windows is included: `llama-b9150-bin-win-cpu-x64.zip`
+![JARVIS AI](app/frontend/public/logo.png)
 
 ---
 
-## Quick Start
+## Features
 
-### 1. Extract llama.cpp
+- **Local AI inference** — runs any GGUF model via llama.cpp (Gemma, Qwen, Llama, Mistral, Nemotron, etc.)
+- **Cloud providers** — connect OpenAI, Anthropic Claude, Ollama, LM Studio, or any OpenAI-compatible API
+- **Agentic tools** — file read/write/patch, terminal execution, code search, web search, memory, sub-agents
+- **Long-term memory** — JARVIS remembers facts about you across sessions
+- **Prompt queue** — queue multiple prompts while the model is busy
+- **Voice mode** — STT + TTS with Edge TTS (free, no key), Fish Audio, or browser speech
+- **Monaco editor** — full code editor with syntax highlighting and diff viewer
+- **YouTube player** — play videos inline in chat with autoplay toggle
+- **Copyable text boxes** — commands, paths, and keys render with one-click copy
+- **Auto-update** — built-in updater checks GitHub releases
 
-```powershell
-Expand-Archive llama-b9150-bin-win-cpu-x64.zip -DestinationPath llama-cpp
+---
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Desktop shell | Tauri v2 (Rust) |
+| Frontend | React 19, Tailwind CSS v4, Vite |
+| Editor | Monaco Editor |
+| Backend | Bun |
+| AI runtime | llama.cpp (`llama-server`) |
+| State | Zustand |
+| Search | ripgrep |
+
+---
+
+## Installation
+
+Download the latest installer from [Releases](https://github.com/benzsiangco/Jarvis-AI/releases):
+
+```
+Jarvis AI_x.x.x_x64-setup.exe
 ```
 
-### 2. Place your GGUF model
+Run the installer — no admin rights required (installs per-user).
+
+---
+
+## Quick Start (Development)
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) >= 18
+- [Bun](https://bun.sh/) >= 1.0
+- [Rust](https://rustup.rs/) (for Tauri)
+- ripgrep (`winget install BurntSushi.ripgrep.MSVC`)
+
+### 1. Install dependencies
+
+```powershell
+npm run install:all
+```
+
+### 2. Place llama.cpp binaries
+
+Extract llama.cpp into `llama-cpp/` at the repo root:
+
+```
+llama-cpp/
+  llama-server.exe
+  ggml-base.dll
+  ...
+```
+
+### 3. Place a GGUF model
 
 ```
 models/
-  gemma-4-2b.gguf       ← rename yours to match
+  your-model.gguf
 ```
 
-### 3. Start llama-server
+### 4. Start dev servers
 
 ```powershell
-.\llama-cpp\llama-server.exe -m models\your-model.gguf --port 8080 --ctx-size 4096 -ngl 0 --host 127.0.0.1
-```
-
-- `-ngl 0` = CPU only (remove or set higher for GPU layers)
-- `--ctx-size 4096` = context window
-
-### 4. Start the Backend (Bun)
-
-```powershell
-cd app\backend
-bun run server.js
-```
-
-### 5. Start the Frontend (Vite)
-
-```powershell
-cd app\frontend
 npm run dev
 ```
 
-Open **http://localhost:5173** in your browser, or use the Electron shell.
+This starts the Bun backend (`:6767`) and Vite frontend (`:5173`) concurrently.
+
+---
+
+## Building the Installer
+
+```powershell
+# Build frontend + backend + package NSIS installer
+npm run build
+```
+
+Output: `app/tauri/target/release/bundle/nsis/Jarvis AI_x.x.x_x64-setup.exe`
 
 ---
 
 ## Project Structure
 
 ```
-gemma4/
-├── models/              ← Place GGUF files here
+Jarvis-AI/
 ├── app/
-│   ├── electron/        ← Electron main + preload
-│   ├── frontend/        ← React + Tailwind + Monaco
+│   ├── backend/          ← Bun HTTP server
+│   │   ├── routes/       ← chat, models, files, memory, voice, tools...
+│   │   ├── services/     ← settingsStore, memoryService, providerService...
+│   │   └── tools/        ← executor, subAgent, patchApply
+│   ├── frontend/         ← React + Tailwind + Monaco
 │   │   └── src/
-│   │       ├── stores/  ← Zustand state
-│   │       └── components/
-│   └── backend/         ← Bun HTTP server
-│       └── routes/      ← chat, files, terminal, models, search
-└── llama-cpp/           ← Extracted llama.cpp binaries
+│   │       ├── components/
+│   │       ├── stores/   ← Zustand state
+│   │       ├── hooks/
+│   │       └── styles/
+│   ├── tauri/            ← Rust/Tauri shell
+│   └── voice/            ← Python voice sidecar (optional)
+├── models/               ← Place GGUF files here (gitignored)
+├── llama-cpp/            ← llama.cpp binaries (gitignored)
+└── scripts/              ← Dev helpers
 ```
 
 ---
 
-## API Endpoints (Backend :3001)
+## Backend API (`:6767`)
 
 | Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Server + llama.cpp status |
-| POST | `/api/chat` | Streaming chat (SSE proxy to llama.cpp) |
-| GET | `/api/files/tree?path=` | Directory tree |
-| GET | `/api/files/read?path=` | Read file |
+|---|---|---|
+| GET | `/api/health` | Server status |
+| POST | `/api/chat` | Streaming agentic chat (SSE) |
+| GET | `/api/models` | List GGUF models + providers |
+| POST | `/api/models/load` | Load a GGUF model |
+| GET | `/api/memory` | List memories |
+| POST | `/api/memory` | Save a memory |
+| GET/POST | `/api/voice/config` | Voice settings |
+| POST | `/api/voice/speak` | TTS synthesis |
+| GET | `/api/files/tree` | Directory tree |
 | POST | `/api/files/write` | Write file |
-| POST | `/api/terminal/exec` | Run shell command (streaming) |
-| GET | `/api/models` | List GGUF models |
-| GET | `/api/search?q=&path=` | ripgrep search |
+| POST | `/api/terminal/exec` | Run shell command |
 
 ---
 
-## llama.cpp Server Flags
+## Configuration
 
-```powershell
-# CPU only
-llama-server.exe -m models\model.gguf --port 8080 --ctx-size 4096 -ngl 0
+Settings are stored in `%APPDATA%\com.jarvis.ai-ide\app-settings.json`:
 
-# With GPU (adjust layers to VRAM)
-llama-server.exe -m models\model.gguf --port 8080 --ctx-size 8192 -ngl 33
-
-# With prompt cache
-llama-server.exe -m models\model.gguf --port 8080 -ngl 0 --cache-prompt
+```json
+{
+  "systemInstructions": "Custom persona or instructions...",
+  "memories": [],
+  "lastModel": "your-model.gguf",
+  "voice": { "provider": "local", "local": { "engine": "edge" } }
+}
 ```
 
 ---
 
-## Notes
+## Auto-Update Setup
 
-- All inference is **fully local** — no API keys, no internet required
-- The backend at `:3001` proxies chat requests to llama-server at `:8080`
-- ripgrep (`rg`) must be in PATH for code search to work
+See [UPDATER.md](UPDATER.md) for instructions on setting up signed releases with GitHub.
+
+---
+
+## License
+
+MIT — © Benz Siangco

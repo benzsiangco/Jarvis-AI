@@ -18,6 +18,12 @@ app/tauri/binaries/
 app/backend/data/
 runtime/
 
+# Voice model files (large binaries)
+app/voice/voices/*.onnx
+app/voice/samples/*.wav
+app/voice/samples/*.pt
+app/voice/test_*.wav
+
 # Secrets & local config
 app/backend/app-settings.json
 *.key
