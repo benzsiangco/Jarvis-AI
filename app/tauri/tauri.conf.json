@@ -64,14 +64,11 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_YOUR_PUBLIC_KEY",
+      "pubkey": "PASTE_YOUR_PUBLIC_KEY_HERE",
       "endpoints": [
-        "https://github.com/YOURUSERNAME/jarvis-ai/releases/latest/download/latest.json"
+        "https://github.com/benzsiangco/Jarvis-AI/releases/latest/download/latest.json"
       ],
-      "dialog": false,
-      "windows": {
-        "installMode": "passive"
-      }
+      "dialog": false
     }
   }
 }

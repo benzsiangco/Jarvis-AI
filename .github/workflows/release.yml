@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'   # triggers on v1.0.0, v1.1.0, etc.
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './app/tauri -> target'
+
+      - name: Install frontend deps
+        run: npm install
+        working-directory: app/frontend
+
+      - name: Install root deps
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build:frontend
+
+      - name: Build backend (Bun)
+        run: npm run build:backend
+
+      - name: Prepare Tauri sidecar
+        run: node app/tauri/scripts/prepare.mjs
+
+      - name: Build Tauri installer (signed)
+        run: npx tauri build
+        working-directory: app/tauri
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Get version from tag
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Generate latest.json
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $sigFile = "app/tauri/target/release/bundle/nsis/Jarvis AI_${version}_x64-setup.exe.sig"
+          $sig = Get-Content $sigFile -Raw
+          $date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+          $json = @{
+            version = $version
+            notes = "See https://github.com/benzsiangco/Jarvis-AI/releases/tag/v${version}"
+            pub_date = $date
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $sig.Trim()
+                url = "https://github.com/benzsiangco/Jarvis-AI/releases/download/v${version}/Jarvis.AI_${version}_x64-setup.exe"
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          $json | Out-File -FilePath "latest.json" -Encoding utf8
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "JARVIS AI v${{ steps.version.outputs.VERSION }}"
+          body: |
+            ## JARVIS AI v${{ steps.version.outputs.VERSION }}
+
+            ### Installation
+            Download and run `Jarvis AI_${{ steps.version.outputs.VERSION }}_x64-setup.exe`
+
+            ### What's new
+            See commit history for changes.
+          files: |
+            app/tauri/target/release/bundle/nsis/Jarvis AI_${{ steps.version.outputs.VERSION }}_x64-setup.exe
+            app/tauri/target/release/bundle/nsis/Jarvis AI_${{ steps.version.outputs.VERSION }}_x64-setup.exe.sig
+            latest.json
+          draft: false
+          prerelease: false
