@@ -64,7 +64,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "PASTE_YOUR_PUBLIC_KEY_HERE",
+      "pubkey": "RWSRFpEyh4hAOBi0b+GL6L4iPcj6t7UAA8uhWQOdlV6HC1Khik4Sq1Y5",
       "endpoints": [
         "https://github.com/benzsiangco/Jarvis-AI/releases/latest/download/latest.json"
       ],
