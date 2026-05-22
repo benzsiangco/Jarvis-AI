@@ -14,6 +14,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Spawn the backend sidecar (Bun-compiled server.exe).
             backend::start(&app.handle())?;
