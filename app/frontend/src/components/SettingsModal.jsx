@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom';
 import {
   X, FileText, Wand2, Mic, Brain, Sparkles,
   RefreshCw, Info, Download, CheckCircle2,
-  AlertCircle, Loader2, Settings as SettingsIcon,
+  AlertCircle, Loader2, Settings as SettingsIcon, Package,
 } from 'lucide-react';
 import SystemPromptTab from './SystemPromptTab';
 import SkillsToolsTab from './SkillsToolsTab';
 import VoiceSettings from './VoiceSettings';
+import VoiceSetupTab from './VoiceSetupTab';
 import MemoryTab from './MemoryTab';
 import SelfImprovementTab from './SelfImprovementTab';
 import useUpdater from '../hooks/useUpdater';
@@ -20,6 +21,7 @@ const TABS = [
   { id: 'memory',  icon: Brain,      label: 'Memory',       desc: 'Long-term facts JARVIS knows' },
   { id: 'improve', icon: Sparkles,   label: 'Improve',      desc: 'Self-improvement analysis' },
   { id: 'voice',   icon: Mic,        label: 'Voice',        desc: 'STT / TTS configuration' },
+  { id: 'setup',   icon: Package,    label: 'Voice Setup',  desc: 'Install voice dependencies' },
   { id: 'update',  icon: RefreshCw,  label: 'Updates',      desc: 'Check for new versions' },
   { id: 'about',   icon: Info,       label: 'About',        desc: 'Version and credits' },
 ];
@@ -101,6 +103,7 @@ export default function SettingsModal({ open, onClose, backendUrl }) {
             {tab === 'memory'  && <MemoryTab backendUrl={backendUrl} />}
             {tab === 'improve' && <SelfImprovementTab backendUrl={backendUrl} />}
             {tab === 'voice'   && <VoiceSettings backendUrl={backendUrl} />}
+            {tab === 'setup'   && <VoiceSetupTab backendUrl={backendUrl} />}
             {tab === 'update'  && <UpdateTab />}
             {tab === 'about'   && <AboutTab />}
           </div>

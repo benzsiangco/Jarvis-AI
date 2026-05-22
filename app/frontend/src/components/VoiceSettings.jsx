@@ -90,10 +90,8 @@ export default function VoiceSettings({ backendUrl }) {
 
       {draft.provider === 'local' && (
         <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)', fontSize: 11, color: '#fbbf24', lineHeight: 1.6 }}>
-          ⚠️ <strong>STT (Whisper) requires the Python sidecar</strong> running separately on port 6970.<br/>
-          <code style={{ fontSize: 10, color: '#fde68a' }}>pip install openai-whisper fastapi uvicorn python-multipart</code><br/>
-          <code style={{ fontSize: 10, color: '#fde68a' }}>python app/voice/sidecar.py</code><br/>
-          <strong>Edge TTS</strong> (TTS only) works without the sidecar — select it below.
+          ⚠️ <strong>STT (Whisper) requires Python dependencies.</strong><br/>
+          Go to the <strong>Voice Setup</strong> tab to install them automatically — no terminal needed.
         </div>
       )}
 

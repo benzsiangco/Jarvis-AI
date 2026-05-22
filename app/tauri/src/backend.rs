@@ -85,19 +85,40 @@ pub fn start(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     // Try to auto-launch the voice sidecar (Python) if Python is available.
     // Non-fatal — voice just won't work if Python isn't installed.
+    // Uses CREATE_NO_WINDOW on Windows to avoid terminal popup.
     let voice_script = res_root.join("voice").join("launch.py");
     if voice_script.exists() {
         let python_cmds = ["python3", "python", "py"];
         for py in &python_cmds {
+            #[cfg(target_os = "windows")]
+            let result = {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                std::process::Command::new(py)
+                    .arg(&voice_script)
+                    .env("JARVIS_VOICE_PORT", "6970")
+                    .env("JARVIS_WHISPER_MODEL", "base.en")
+                    .env("JARVIS_WHISPER_DEVICE", "cpu")
+                    .env("JARVIS_WHISPER_COMPUTE", "int8")
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+            };
+            #[cfg(not(target_os = "windows"))]
             let result = std::process::Command::new(py)
                 .arg(&voice_script)
                 .env("JARVIS_VOICE_PORT", "6970")
                 .env("JARVIS_WHISPER_MODEL", "base.en")
                 .env("JARVIS_WHISPER_DEVICE", "cpu")
                 .env("JARVIS_WHISPER_COMPUTE", "int8")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn();
             if result.is_ok() {
-                eprintln!("[voice] launched via {}", py);
+                eprintln!("[voice] launched silently via {}", py);
                 break;
             }
         }
