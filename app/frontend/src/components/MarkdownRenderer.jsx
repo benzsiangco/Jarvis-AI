@@ -136,18 +136,22 @@ function buildComponents(compact) {
     a({ href, children }) {
       const isExternal = href && (href.startsWith('http') || href.startsWith('//'));
       const handleClick = (e) => {
-        if (isExternal) {
-          e.preventDefault();
-          window.open(href, '_blank');
+        if (!isExternal) return;
+        e.preventDefault();
+        // In Tauri, use the electronAPI shim which calls shell_open_path
+        // This routes through the OS default browser
+        if (window.electronAPI?.openPath) {
+          window.electronAPI.openPath(href).catch(() => {});
+        } else {
+          window.open(href, '_blank', 'noopener,noreferrer');
         }
       };
       return (
         <a
           href={href}
           onClick={handleClick}
-          target={isExternal ? '_blank' : undefined}
-          rel={isExternal ? 'noopener noreferrer' : undefined}
           className="md-link"
+          style={{ cursor: 'pointer' }}
         >
           {children}
           {isExternal && <span className="md-link-icon">↗</span>}
