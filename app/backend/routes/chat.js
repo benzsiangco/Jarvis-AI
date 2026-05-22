@@ -148,8 +148,8 @@ export async function chatRoute(req) {
 
   const context = { mode: permissionMode, workspacePath, send: null }; // send injected below
   const thinkingInstruction = thinkingMode
-    ? '\n\nREASONING: Think in max 2 sentences, then output the tool JSON or answer. Do NOT reason yourself out of using tools.'
-    : '';
+    ? '\n\nREASONING: Think step by step before answering. Use <think> tags for your reasoning.'
+    : '\n\nIMPORTANT: Do NOT use <think> tags. Do NOT reason out loud. Reply directly and immediately with no preamble.';
   const history = [
     { role: 'system', content: await buildSystemPrompt(workspacePath) + thinkingInstruction },
     ...sanitized,
@@ -298,7 +298,7 @@ export async function chatRoute(req) {
           }
         }
 
-        await agentLoop({ history, context, temperature, max_tokens, send, emit, provider: activeProvider });
+        await agentLoop({ history, context, temperature, max_tokens, send, emit, provider: activeProvider, thinkingMode });
       } catch (err) {
         const msg = err?.message || 'Unknown error';
         try { emit({ type: 'done', message: `Agent stopped: ${msg}` }); } catch {}
@@ -325,7 +325,7 @@ export async function chatRoute(req) {
 
 // ── Agent Loop ────────────────────────────────────────────────────────────────
 
-async function agentLoop({ history, context, temperature, max_tokens, send, emit, provider }) {
+async function agentLoop({ history, context, temperature, max_tokens, send, emit, provider, thinkingMode = false }) {
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     // Bump round counter on the frontend
     send('thinking', { thinking: { type: '_round', round } });
@@ -341,7 +341,7 @@ async function agentLoop({ history, context, temperature, max_tokens, send, emit
     try {
       const result = provider
         ? await streamProviderResponse({ history, temperature, max_tokens, send, emit, provider })
-        : await streamLlamaResponse({ history, temperature, max_tokens, send, emit });
+        : await streamLlamaResponse({ history, temperature, max_tokens, send, emit, thinkingMode });
       fullText = result.fullText;
       thinkBuffer = result.thinkBuffer || '';
     } catch (err) {
@@ -517,7 +517,7 @@ async function streamProviderResponse({ history, temperature, max_tokens, send, 
 
 // ── llama.cpp Streaming ───────────────────────────────────────────────────────
 
-async function streamLlamaResponse({ history, temperature, max_tokens, send, emit }) {
+async function streamLlamaResponse({ history, temperature, max_tokens, send, emit, thinkingMode = false }) {
   // Compute safe budget from actual model context size.
   // Reserve 50% for input, 50% for output — gives more room for responses.
   const ctxSize = runtimeStats.contextSize || 4096;
@@ -526,13 +526,30 @@ async function streamLlamaResponse({ history, temperature, max_tokens, send, emi
   const safeMaxTokens = Math.min(requested, outputCap);
   // Truncate history to avoid exceeding context size
   const trimmed = trimHistory(history, ctxSize, safeMaxTokens);
+
+  // Build request body — disable thinking tokens when thinkingMode is off.
+  // llama.cpp / Gemma4 supports: thinking.type = "disabled" | "enabled" | "auto"
+  // budget_tokens = 0 also works as a hard disable for models that support it.
+  const requestBody = {
+    messages: trimmed,
+    temperature,
+    max_tokens: safeMaxTokens,
+    stream: true,
+  };
+  if (!thinkingMode) {
+    // Disable thinking tokens at the API level — prevents <think> generation entirely
+    requestBody.thinking = { type: 'disabled' };
+    requestBody.budget_tokens = 0;
+  } else {
+    requestBody.thinking = { type: 'enabled', budget_tokens: Math.min(1024, Math.floor(safeMaxTokens * 0.3)) };
+  }
   let llamaRes;
   try {
     // Use a long timeout — CPU inference can be slow (5 min for long responses)
     llamaRes = await fetch(`${LLAMA_URL}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: trimmed, temperature, max_tokens: safeMaxTokens, stream: true }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(300000), // 5 min — CPU models need time
     });
   } catch (e) {
@@ -574,6 +591,8 @@ async function streamLlamaResponse({ history, temperature, max_tokens, send, emi
 
   const flushThinking = (force = false) => {
     if (!thinkBuffer) return;
+    // When thinking is disabled, silently discard — don't show in reasoning panel
+    if (!thinkingMode) { return; }
     const now = Date.now();
     if (!force && now - thinkLastEmit < 250) return;
     thinkLastEmit = now;
@@ -639,8 +658,11 @@ async function streamLlamaResponse({ history, temperature, max_tokens, send, emi
         // a dedicated `reasoning_content` field instead of <think> tags.
         const reasoningChunk = delta.reasoning_content || delta.reasoning || '';
         if (reasoningChunk) {
-          thinkBuffer += reasoningChunk;
-          flushThinking();
+          if (thinkingMode) {
+            thinkBuffer += reasoningChunk;
+            flushThinking();
+          }
+          // When thinking is off, discard reasoning_content entirely
           continue;
         }
         const token = delta.content || '';
