@@ -86,6 +86,7 @@ setTimeout(async () => {
       appliedSettings = { ...settings };
       currentCtxSize = settings.ctxSize;
       runtimeStats.contextSize = settings.ctxSize;
+      runtimeStats.contextUsed = 0;
       pushLog('info', `[auto-restore] ${model} ready`);
     } else {
       serverStatus = 'error';
@@ -444,6 +445,7 @@ export async function modelsRoute(req, url) {
         appliedSettings = { ...settings };
         currentCtxSize = settings.ctxSize;
         runtimeStats.contextSize = settings.ctxSize;
+        runtimeStats.contextUsed = 0;
         pushLog('info', 'Runtime ready');
         await saveLastModel(currentModel, settings);
       } else if (loadError) {
@@ -639,6 +641,7 @@ export async function modelsRoute(req, url) {
         appliedSettings = { ...settings };
         currentCtxSize = settings.ctxSize;
         runtimeStats.contextSize = settings.ctxSize;
+        runtimeStats.contextUsed = 0;
         pushLog('info', 'Runtime ready');
         await saveLastModel(currentModel, settings);
       } else if (loadError) {

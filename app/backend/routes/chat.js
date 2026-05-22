@@ -771,6 +771,14 @@ async function streamLlamaResponse({ history, temperature, max_tokens, send, emi
     const elapsed = (Date.now() - streamStart) / 1000;
     runtimeStats.tokensPerSecond = elapsed > 0 ? Math.round((streamTokens / elapsed) * 10) / 10 : 0;
     runtimeStats.totalTokens += streamTokens;
+    // Track context used — accumulate tokens across the conversation
+    // This gives a running estimate of how much context has been consumed
+    if (streamTokens > 0) {
+      runtimeStats.contextUsed = Math.min(
+        runtimeStats.contextSize || 4096,
+        (runtimeStats.contextUsed || 0) + streamTokens
+      );
+    }
     // Final flush of any in-progress reasoning text
     flushThinking(true);
   } catch (e) {

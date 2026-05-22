@@ -137,6 +137,7 @@ export default function App() {
             if (sessId) await loadSession(backendUrl, sessId);
             checkHealth(backendUrl);
             fetchModels(backendUrl);
+            useModelStore.getState().fetchAppliedSettings(backendUrl).catch(() => {});
             const fetchStats = () => useModelStore.getState().fetchLlamaStats(backendUrl);
             const interval = setInterval(() => { checkHealth(backendUrl); fetchStats(); }, 5000);
             return () => clearInterval(interval);
@@ -162,6 +163,8 @@ export default function App() {
     boot();
     checkHealth(backendUrl);
     fetchModels(backendUrl);
+    // Fetch applied settings so status bar shows correct ctx size on startup
+    useModelStore.getState().fetchAppliedSettings(backendUrl).catch(() => {});
     const fetchStats = () => useModelStore.getState().fetchLlamaStats(backendUrl);
     const interval = setInterval(() => { checkHealth(backendUrl); fetchStats(); }, 5000);
     return () => clearInterval(interval);
