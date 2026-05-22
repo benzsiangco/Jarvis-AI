@@ -66,14 +66,18 @@ export default function VoiceSettings({ backendUrl }) {
           active={draft.provider === 'local'}
           onClick={() => setProvider('local')}
           title="Local (Whisper + Piper)"
-          desc="Offline STT + TTS. Runs via Python sidecar. Free."
+          desc="Offline STT + TTS. Requires Python sidecar running separately."
+          badge="Requires setup"
+          badgeColor="#fbbf24"
         />
         <ProviderCard
           id="browser"
           active={draft.provider === 'browser'}
           onClick={() => setProvider('browser')}
           title="Browser TTS"
-          desc="Free, offline. Uses the OS voice."
+          desc="Free, offline. Uses the OS voice. No setup needed."
+          badge="Recommended"
+          badgeColor="#34d399"
         />
         <ProviderCard
           id="fish"
@@ -83,6 +87,15 @@ export default function VoiceSettings({ backendUrl }) {
           desc="Cloud STT + TTS with voice cloning. Requires API key + credits."
         />
       </div>
+
+      {draft.provider === 'local' && (
+        <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)', fontSize: 11, color: '#fbbf24', lineHeight: 1.6 }}>
+          ⚠️ <strong>STT (Whisper) requires the Python sidecar</strong> running separately on port 6970.<br/>
+          <code style={{ fontSize: 10, color: '#fde68a' }}>pip install openai-whisper fastapi uvicorn python-multipart</code><br/>
+          <code style={{ fontSize: 10, color: '#fde68a' }}>python app/voice/sidecar.py</code><br/>
+          <strong>Edge TTS</strong> (TTS only) works without the sidecar — select it below.
+        </div>
+      )}
 
       {draft.provider === 'local' && (
         <LocalSettings
@@ -219,10 +232,17 @@ export default function VoiceSettings({ backendUrl }) {
   );
 }
 
-function ProviderCard({ active, onClick, title, desc }) {
+function ProviderCard({ active, onClick, title, desc, badge, badgeColor }) {
   return (
     <button type="button" onClick={onClick} className={`vs-card ${active ? 'active' : ''}`}>
-      <div className="vs-card-title">{title}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <div className="vs-card-title">{title}</div>
+        {badge && (
+          <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: `${badgeColor}18`, color: badgeColor, border: `1px solid ${badgeColor}30`, flexShrink: 0 }}>
+            {badge}
+          </span>
+        )}
+      </div>
       <div className="vs-card-desc">{desc}</div>
     </button>
   );

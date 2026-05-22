@@ -6,7 +6,7 @@
 import { readSettings, updateSettings } from './settingsStore.js';
 
 const DEFAULT = Object.freeze({
-  provider: 'local',
+  provider: 'browser',  // browser works out of the box, no setup needed
   fish: {
     apiKey:     '',
     ttsModel:   's2-pro',
