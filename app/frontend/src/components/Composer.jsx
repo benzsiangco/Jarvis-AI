@@ -264,21 +264,7 @@ export default function Composer({ backendUrl }) {
                 <span>Add context</span>
               </button>
               <PermissionSelect />
-              <button className="composer-btn" type="button"
-                onClick={() => setThinkingMode(!thinkingMode)}
-                title={thinkingMode ? 'Deep thinking ON — model reasons step by step' : 'Deep thinking OFF'}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 5, height: 26, padding: '0 8px',
-                  borderRadius: 6, fontSize: 10, fontWeight: 600,
-                  border: thinkingMode ? '1px solid rgba(167,139,250,0.2)' : '1px solid rgba(255,255,255,0.06)',
-                  background: thinkingMode ? 'rgba(167,139,250,0.1)' : 'rgba(255,255,255,0.03)',
-                  color: thinkingMode ? '#a78bfa' : '#5e6370',
-                  cursor: 'pointer', transition: 'all .12s',
-                }}
-              >
-                <Brain size={12} />
-                <span>Think</span>
-              </button>
+              <ThinkToggle on={thinkingMode} onToggle={() => setThinkingMode(!thinkingMode)} />
             </div>
             <div className="composer-controls-right">
               <button className="composer-btn" type="button" onClick={() => setModelModalOpen(true)} title="Select model">
@@ -478,4 +464,24 @@ function computeQuickStats(original, modified) {
     if (a[i] !== b[i]) { add++; del++; }
   }
   return { add, del };
+}
+
+/* ── Think Toggle — LM Studio style ── */
+function ThinkToggle({ on, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={on ? 'Thinking ON — model reasons before replying (slower, more accurate)' : 'Thinking OFF — fast direct response'}
+      className="think-toggle"
+      data-on={on}
+    >
+      <Brain size={11} className="think-toggle-icon" />
+      <span className="think-toggle-label">Think</span>
+      {/* Toggle track */}
+      <span className="think-toggle-track">
+        <span className="think-toggle-thumb" />
+      </span>
+    </button>
+  );
 }
