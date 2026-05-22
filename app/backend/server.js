@@ -112,6 +112,36 @@ const server = Bun.serve({
         }
       } else if (path.startsWith('/api/tools')) {
         response = await toolsRoute(req);
+      } else if (path === '/api/proxy-image') {
+        // Image proxy — fetches external images server-side to bypass CORS/hotlink
+        const imgUrl = url.searchParams.get('url');
+        if (!imgUrl || !imgUrl.startsWith('http')) {
+          response = Response.json({ error: 'url required' }, { status: 400 });
+        } else {
+          try {
+            const imgRes = await fetch(imgUrl, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': new URL(imgUrl).origin,
+                'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+              },
+              signal: AbortSignal.timeout(15000),
+            });
+            if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
+            const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+            const buf = await imgRes.arrayBuffer();
+            response = new Response(buf, {
+              status: 200,
+              headers: {
+                'Content-Type': contentType,
+                'Cache-Control': 'public, max-age=3600',
+                'Content-Length': String(buf.byteLength),
+              },
+            });
+          } catch (e) {
+            response = Response.json({ error: `Proxy failed: ${e.message}` }, { status: 502 });
+          }
+        }
       } else if (path.startsWith('/v1')) {
         // Public OpenAI-compatible API — for openclaw, opencode, etc.
         response = await apiRoute(req, url);
