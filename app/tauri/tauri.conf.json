@@ -1,7 +1,7 @@
 {
   "productName": "Jarvis AI",
   "version": "1.0.0",
-  "identifier": "com.jarvis.ai-ide",
+  "identifier": "com.jarvis.ai",
   "build": {
     "beforeDevCommand": "",
     "devUrl": "http://localhost:5173",

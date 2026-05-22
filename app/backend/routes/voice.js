@@ -120,7 +120,7 @@ export async function voiceRoute(req, url) {
   return Response.json({ error: 'Unknown voice endpoint' }, { status: 404 });
 }
 
-/* ── Edge TTS — direct via Microsoft Cognitive Services REST ─────────── */
+/* ── Edge TTS — via edge-tts-node package ────────────────────────────── */
 
 async function speakEdgeDirect(req, cfg) {
   let body;
@@ -133,17 +133,33 @@ async function speakEdgeDirect(req, cfg) {
   const voice  = cfg.local?.edgeVoice  || 'en-GB-RyanNeural';
   const rate   = cfg.local?.edgeRate   || '+0%';
   const pitch  = cfg.local?.edgePitch  || '+0Hz';
-  const volume = cfg.local?.edgeVolume || '+0%';
 
   try {
-    const audioData = await synthesizeEdgeTTS(text, voice, rate, pitch, volume);
-    return new Response(audioData, {
+    const { EdgeTTS } = await import('edge-tts-node');
+    const tts = new EdgeTTS();
+    const chunks = [];
+
+    await tts.synthesize(text, voice, {
+      rate,
+      pitch,
+      onData: (chunk) => { if (chunk) chunks.push(chunk); },
+    });
+
+    if (!chunks.length) throw new Error('No audio data received');
+    const audio = Buffer.concat(chunks);
+
+    return new Response(audio, {
       status: 200,
       headers: { 'Content-Type': 'audio/mpeg' },
     });
   } catch (e) {
-    // Fallback: try browser TTS hint
-    return Response.json({ error: `Edge TTS failed: ${e.message}` }, { status: 503 });
+    // Fallback to manual WebSocket implementation
+    try {
+      const audio = await synthesizeViaWebSocket(text, voice, rate, pitch, cfg.local?.edgeVolume || '+0%');
+      return new Response(audio, { status: 200, headers: { 'Content-Type': 'audio/mpeg' } });
+    } catch (wsErr) {
+      return Response.json({ error: `Edge TTS failed: ${e.message} | WS: ${wsErr.message}` }, { status: 503 });
+    }
   }
 }
 

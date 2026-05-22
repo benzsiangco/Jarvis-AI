@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
+    "edge-tts-node": "^1.5.7",
     "node-pty": "^1.0.0"
   }
 }
