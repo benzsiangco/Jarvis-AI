@@ -142,13 +142,19 @@ function UpdateTab() {
             {status === 'ready' && 'Update downloaded — restart to apply'}
             {status === 'error' && 'Update check failed'}
           </div>
-          <div className="update-status-sub">
+          <div className="update-status-sub" style={{ color: status === 'error' ? '#f87171' : undefined }}>
             {(status === 'idle' || status === 'uptodate') && `JARVIS AI v${VERSION} is the latest version`}
             {status === 'available' && 'A new version is ready to download and install'}
             {status === 'error' && (error || 'Could not reach update server')}
           </div>
         </div>
       </div>
+
+      {status === 'error' && error?.includes('public') && (
+        <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 8, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)', fontSize: 11, color: '#fbbf24', lineHeight: 1.6 }}>
+          💡 To enable auto-updates: go to <strong>github.com/benzsiangco/Jarvis-AI</strong> → Settings → Change visibility → <strong>Make public</strong>
+        </div>
+      )}
 
       {status === 'downloading' && (
         <div className="update-progress-wrap" style={{ margin: '12px 0' }}>

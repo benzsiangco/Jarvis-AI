@@ -242,35 +242,55 @@ async def transcribe(file: UploadFile = File(...), language: Optional[str] = For
         raise HTTPException(400, "empty audio payload")
     if len(raw) > MAX_BYTES:
         raise HTTPException(413, f"audio too large (>{MAX_BYTES} bytes)")
+
     suffix = Path(file.filename or "audio.webm").suffix or ".webm"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(raw)
         tmp_path = tmp.name
+
+    # Convert to wav if needed (webm/ogg require ffmpeg for whisper)
+    wav_path = None
     try:
+        if suffix.lower() in (".webm", ".ogg", ".opus", ".m4a", ".mp4"):
+            wav_path = tmp_path + ".wav"
+            import subprocess
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", tmp_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_path],
+                capture_output=True, timeout=30
+            )
+            if result.returncode != 0:
+                # ffmpeg not available or failed — try passing original to whisper anyway
+                wav_path = None
+        transcribe_path = wav_path or tmp_path
+
         model = get_whisper()
         kwargs = {
             "fp16": False,
-            "language": language or "en",
-            "beam_size": 5,
-            "best_of": 5,
-            "condition_on_previous_text": False,  # prevents hallucination loops
-            "no_speech_threshold": 0.6,           # reject clips that are mostly silence/noise
-            "compression_ratio_threshold": 2.4,   # reject repetitive/garbled output
-            "initial_prompt": "Jarvis, sir, yes, no, hello, good morning, good evening, what time is it, remember, open, close, run, stop, help.",
+            "language": language or None,  # None = auto-detect
+            "beam_size": 3,
+            "best_of": 3,
+            "condition_on_previous_text": False,
+            "no_speech_threshold": 0.5,
+            "compression_ratio_threshold": 2.4,
+            "temperature": 0.0,  # greedy — more accurate for short commands
         }
         if language:
             kwargs["language"] = language
-        result = model.transcribe(tmp_path, **kwargs)
+
+        result = model.transcribe(transcribe_path, **kwargs)
         text = (result.get("text") or "").strip()
+
         # Filter common Whisper hallucinations on silence/noise
         HALLUCINATIONS = {
             "", "you", "thank you", "thanks", "thank you.", "thanks.",
             "[blank_audio]", "[music]", "[silence]", "...", ". . .",
             "bye", "bye.", "goodbye", "goodbye.", "okay", "okay.",
-            "hmm", "hmm.", "um", "uh", "ah",
+            "hmm", "hmm.", "um", "uh", "ah", ".", "..", "...",
+            "subtitles by", "subtitle", "transcribed by",
         }
-        if text.lower() in HALLUCINATIONS or len(text) < 2:
+        if text.lower().strip(".!? ") in HALLUCINATIONS or len(text) < 2:
             text = ""
+
         return {"text": text, "language": result.get("language"), "model": WHISPER_MODEL}
     except Exception as e:
         log.exception("transcribe failed")
@@ -278,6 +298,9 @@ async def transcribe(file: UploadFile = File(...), language: Optional[str] = For
     finally:
         try: os.remove(tmp_path)
         except OSError: pass
+        if wav_path:
+            try: os.remove(wav_path)
+            except OSError: pass
 
 
 class SpeakRequest(BaseModel):

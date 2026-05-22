@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 export default function useUpdater() {
-  const [status, setStatus] = useState('idle'); // idle | checking | available | downloading | ready | error | uptodate
+  const [status, setStatus] = useState('idle');
   const [version, setVersion] = useState(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
@@ -14,7 +14,11 @@ export default function useUpdater() {
   const isTauri = typeof window !== 'undefined' && !!window.__TAURI_INTERNALS__;
 
   const check = useCallback(async () => {
-    if (!isTauri) return;
+    if (!isTauri) {
+      setStatus('error');
+      setError('Auto-update only works in the installed app, not in dev mode.');
+      return;
+    }
     setStatus('checking');
     setError(null);
     try {
@@ -26,10 +30,20 @@ export default function useUpdater() {
         setStatus('available');
       } else {
         setStatus('uptodate');
-        setTimeout(() => setStatus('idle'), 3000);
+        setTimeout(() => setStatus('idle'), 4000);
       }
     } catch (e) {
-      setError(e.message || 'Update check failed');
+      const msg = e?.message || String(e) || 'Update check failed';
+      // Detect private repo / network errors and give a clear message
+      const isPrivate = /404|not found|forbidden|unauthorized/i.test(msg);
+      const isNetwork = /network|fetch|connect|timeout/i.test(msg);
+      setError(
+        isPrivate
+          ? 'Update server unreachable — make the GitHub repo public or check the endpoint URL.'
+          : isNetwork
+          ? 'No internet connection or update server is down.'
+          : msg
+      );
       setStatus('error');
     }
   }, [isTauri]);
@@ -40,9 +54,8 @@ export default function useUpdater() {
     setProgress(0);
     try {
       await update.downloadAndInstall((event) => {
-        if (event.event === 'Started') {
-          setProgress(0);
-        } else if (event.event === 'Progress') {
+        if (event.event === 'Started') setProgress(0);
+        else if (event.event === 'Progress') {
           const pct = event.data.contentLength
             ? Math.round((event.data.chunkLength / event.data.contentLength) * 100)
             : 0;
@@ -66,10 +79,10 @@ export default function useUpdater() {
     } catch {}
   }, [isTauri]);
 
-  // Auto-check on startup after 3s delay
+  // Auto-check on startup after 5s delay
   useEffect(() => {
     if (!isTauri) return;
-    const t = setTimeout(check, 3000);
+    const t = setTimeout(check, 5000);
     return () => clearTimeout(t);
   }, [check, isTauri]);
 

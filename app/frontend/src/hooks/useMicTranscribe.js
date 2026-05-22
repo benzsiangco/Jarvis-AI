@@ -33,12 +33,19 @@ export default function useMicTranscribe({ backendUrl, onTranscript } = {}) {
     try {
       const inputDeviceId = useAudioDevicesStore.getState().inputDeviceId;
       const audioConstraints = inputDeviceId
-        ? { deviceId: { exact: inputDeviceId }, echoCancellation: true, noiseSuppression: true }
-        : { echoCancellation: true, noiseSuppression: true };
+        ? { deviceId: { exact: inputDeviceId }, echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
+        : { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 };
       const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
+
+      // Prefer formats Whisper handles without ffmpeg
+      const preferredMimes = [
+        'audio/wav',
+        'audio/webm;codecs=pcm',
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+      ];
+      const mime = preferredMimes.find((m) => MediaRecorder.isTypeSupported(m)) || 'audio/webm';
       const rec = new MediaRecorder(stream, { mimeType: mime });
 
       streamRef.current = stream;
@@ -74,7 +81,8 @@ export default function useMicTranscribe({ backendUrl, onTranscript } = {}) {
     setBusy(true);
     try {
       const fd = new FormData();
-      fd.append('file', blob, 'audio.webm');
+      const ext = blob.type.includes('wav') ? 'wav' : blob.type.includes('ogg') ? 'ogg' : 'webm';
+      fd.append('file', blob, `audio.${ext}`);
       const res = await fetch(`${backendUrl}/api/voice/transcribe`, { method: 'POST', body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
