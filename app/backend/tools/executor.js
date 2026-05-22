@@ -35,6 +35,7 @@ const TOOLS = {
   runTerminal:    { handler: execRunTerminal },
   openFolder:     { handler: execOpenFolder },
   searchInternet: { handler: execSearchInternet },
+  searchImages:   { handler: execSearchImages },
   webFetch:       { handler: execWebFetch },
   spawnAgent:     { handler: execSpawnAgent },
   rememberFact:   { handler: execRememberFact },
@@ -243,6 +244,44 @@ async function execSearchInternet({ query, maxResults }, ctx) {
   return { query, results, totalResults: results.length };
 }
 
+async function execSearchImages({ query, maxResults }, ctx) {
+  if (!query) throw new Error('query is required');
+  const count = Math.min(Math.max(Number(maxResults) || 8, 1), 20);
+
+  // Use DuckDuckGo Images API (no key needed)
+  const url = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`;
+  const tokenRes = await fetch('https://duckduckgo.com/', {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    signal: AbortSignal.timeout(8000),
+  });
+  const tokenHtml = await tokenRes.text();
+  const vqdMatch = tokenHtml.match(/vqd=([\d-]+)/);
+  const vqd = vqdMatch ? vqdMatch[1] : '';
+
+  const apiUrl = `https://duckduckgo.com/i.js?q=${encodeURIComponent(query)}&o=json&p=1&s=0&u=bing&f=,,,&l=us-en${vqd ? `&vqd=${vqd}` : ''}`;
+  const res = await fetch(apiUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://duckduckgo.com/',
+      'Accept': 'application/json',
+    },
+    signal: AbortSignal.timeout(10000),
+  });
+
+  if (!res.ok) throw new Error(`Image search failed: HTTP ${res.status}`);
+  const data = await res.json();
+  const results = (data.results || []).slice(0, count).map((r) => ({
+    url: r.image,
+    thumb: r.thumbnail,
+    title: r.title || '',
+    source: r.url || '',
+    width: r.width,
+    height: r.height,
+  })).filter((r) => r.url);
+
+  return { query, images: results, total: results.length };
+}
+
 async function execWebFetch({ url, selector }, ctx) {
   if (!url) throw new Error('url is required');
   // Normalize URL
@@ -295,6 +334,7 @@ function validateArgs(tool, args) {
     runTerminal:    ['command'],
     openFolder:     ['path'],
     searchInternet: ['query'],
+    searchImages:   ['query'],
     webFetch:       ['url'],
     rememberFact:   ['content'],
     recallMemory:   [],
@@ -357,7 +397,7 @@ function toolStartMessage(tool, args) {
     case 'runTerminal':  return `Running: ${args.command}`;
     case 'openFolder':   return `Opening folder ${args.path}`;
     case 'searchInternet':return `Searching the web for "${args.query}"`;
-    case 'webFetch':      return `Fetching ${args.url?.slice(0, 60)}…`;    case 'spawnAgent':   return `Spawning sub-agent: ${(args.task || '').slice(0, 60)}…`;
+    case 'searchImages':  return `Searching images for "${args.query}"…`;    case 'webFetch':      return `Fetching ${args.url?.slice(0, 60)}…`;    case 'spawnAgent':   return `Spawning sub-agent: ${(args.task || '').slice(0, 60)}…`;
     case 'rememberFact': return `Committing to memory…`;
     case 'recallMemory': return args.query ? `Recalling "${args.query}"` : `Reviewing memory`;
     case 'forgetFact':   return `Forgetting memory ${args.id?.slice(0, 8) || ''}`;
@@ -389,6 +429,10 @@ function toolDoneMessage(tool, args, result) {
     case 'searchInternet': {
       const n = result?.totalResults ?? 0;
       return `Found ${n} result${n !== 1 ? 's' : ''} for "${args.query}"`;
+    }
+    case 'searchImages': {
+      const n = result?.images?.length ?? 0;
+      return `Found ${n} image${n !== 1 ? 's' : ''} for "${args.query}"`;
     }
     case 'webFetch': {
       const len = result?.content?.length ?? 0;

@@ -57,11 +57,12 @@ export default function StatusBar({ backendUrl }) {
     return () => clearInterval(intervalRef.current);
   }, [backendUrl, serverStatus, intervalMs, fetchStats]);
 
-  // Real context size: prefer llama.cpp's runtime stats (probed from /props),
-  // fall back to user-set ctxSize. The two can differ when the model has a
-  // smaller native context than what the user requested.
-  const effectiveCtx = llamaStats?.contextSize || appliedSettings?.ctxSize || 0;
-  const ctxUsed      = llamaStats?.contextUsed  || 0;
+  // Context size: prefer runtime stats (actual), fall back to applied settings (requested)
+  // These differ when the model's native context < user-requested ctx
+  const effectiveCtx = (llamaStats?.contextSize && llamaStats.contextSize > 0)
+    ? llamaStats.contextSize
+    : (appliedSettings?.ctxSize || 0);
+  const ctxUsed = llamaStats?.contextUsed || 0;
   const tps          = llamaStats?.tokensPerSecond || 0;
   const showStats    = serverStatus === 'ready';
 

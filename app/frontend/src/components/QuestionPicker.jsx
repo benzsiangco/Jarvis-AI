@@ -1,9 +1,8 @@
 /**
- * QuestionPicker — shown when JARVIS calls askQuestion.
- * Always shows clickable option buttons (when real options exist) AND
- * a free-text input so the user can type a custom answer at any time.
+ * QuestionPicker — professional question UI for JARVIS askQuestion tool.
  */
 import { useState } from 'react';
+import { Send, HelpCircle } from 'lucide-react';
 import useChatStore from '../stores/chatStore';
 import useWorkspaceStore from '../stores/workspaceStore';
 import usePermissionStore from '../stores/permissionStore';
@@ -20,18 +19,19 @@ export default function QuestionPicker({ backendUrl }) {
   const clearPendingQuestion = useChatStore((s) => s.clearPendingQuestion);
   const sendMessage          = useChatStore((s) => s.sendMessage);
   const permissionMode       = usePermissionStore((s) => s.mode);
-  const [freeText, setFreeText] = useState('');
+  const [freeText, setFreeText]   = useState('');
+  const [selected, setSelected]   = useState(null);
 
   if (!pendingQuestion) return null;
 
   const { question, options = [] } = pendingQuestion;
-  // Filter out placeholder-only options — show real ones as buttons
   const realOptions = isPlaceholder(options) ? [] : options;
 
   const choose = (answer) => {
     if (!answer.trim()) return;
     clearPendingQuestion();
     setFreeText('');
+    setSelected(null);
     const ws = useWorkspaceStore.getState().getActiveWorkspace?.();
     sendMessage(answer.trim(), backendUrl, {
       workspacePath: ws?.path || '',
@@ -40,63 +40,57 @@ export default function QuestionPicker({ backendUrl }) {
   };
 
   return (
-    <div style={{
-      margin: '8px 0', padding: '12px 14px', borderRadius: 10,
-      background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.18)',
-    }}>
-      {/* Question text */}
-      <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 10 }}>
-        {question}
+    <div className="qp-root">
+      {/* Header */}
+      <div className="qp-header">
+        <div className="qp-icon">
+          <HelpCircle size={14} style={{ color: '#22d3ee' }} />
+        </div>
+        <span className="qp-label">JARVIS needs your input</span>
       </div>
 
-      {/* Option buttons — always shown when real options exist */}
+      {/* Question */}
+      <div className="qp-question">{question}</div>
+
+      {/* Option buttons */}
       {realOptions.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 10 }}>
+        <div className="qp-options">
           {realOptions.map((opt, i) => (
             <button
               key={i}
-              onClick={() => choose(opt)}
-              style={{
-                padding: '6px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
-                background: 'rgba(6,182,212,0.12)', color: '#67e8f9',
-                border: '1px solid rgba(6,182,212,0.25)', cursor: 'pointer',
-                transition: 'all .12s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(6,182,212,0.22)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'rgba(6,182,212,0.12)'}
+              className={`qp-option ${selected === i ? 'qp-option-selected' : ''}`}
+              onClick={() => { setSelected(i); choose(opt); }}
             >
-              {opt}
+              <span className="qp-option-letter">{String.fromCharCode(65 + i)}</span>
+              <span className="qp-option-text">{opt}</span>
             </button>
           ))}
         </div>
       )}
 
-      {/* Free-text input — always shown so user can type a custom answer */}
-      <div style={{ display: 'flex', gap: 8 }}>
+      {/* Divider if both options and free text */}
+      {realOptions.length > 0 && (
+        <div className="qp-divider">
+          <span>or type a custom answer</span>
+        </div>
+      )}
+
+      {/* Free text input */}
+      <div className="qp-input-row">
         <input
           autoFocus={realOptions.length === 0}
           value={freeText}
           onChange={(e) => setFreeText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') choose(freeText); }}
-          placeholder={realOptions.length > 0 ? 'Or type a custom answer…' : 'Type your answer…'}
-          style={{
-            flex: 1, height: 32, padding: '0 10px', borderRadius: 7,
-            background: 'rgba(0,0,0,0.3)', color: '#e2e8f0',
-            border: '1px solid rgba(6,182,212,0.25)', outline: 'none', fontSize: 12,
-          }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && freeText.trim()) choose(freeText); }}
+          placeholder={realOptions.length > 0 ? 'Custom answer…' : 'Type your answer…'}
+          className="qp-input"
         />
         <button
           onClick={() => choose(freeText)}
           disabled={!freeText.trim()}
-          style={{
-            height: 32, padding: '0 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
-            background: freeText.trim() ? 'rgba(6,182,212,0.22)' : 'rgba(6,182,212,0.08)',
-            color: freeText.trim() ? '#67e8f9' : 'rgba(103,232,249,0.4)',
-            border: '1px solid rgba(6,182,212,0.25)', cursor: freeText.trim() ? 'pointer' : 'default',
-            transition: 'all .12s',
-          }}
+          className={`qp-send ${freeText.trim() ? 'qp-send-active' : ''}`}
         >
-          Send
+          <Send size={13} />
         </button>
       </div>
     </div>

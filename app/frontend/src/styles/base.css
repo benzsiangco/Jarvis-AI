@@ -429,58 +429,7 @@ textarea {
   overflow: hidden;
 }
 
-/* ── Code blocks ─────────────────────────────────────────────────────────── */
-.md-code-block {
-  border: 1px solid rgba(255, 255, 255, .05);
-  border-radius: var(--r-md);
-  overflow: hidden;
-  margin: 12px 0;
-  isolation: isolate;
-  background: rgba(7, 7, 14, .88);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .32);
-}
-
-.md-code-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 5px 13px;
-  border-bottom: 1px solid rgba(255, 255, 255, .04);
-  background: rgba(255, 255, 255, .014);
-}
-
-.md-code-lang {
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: .05em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, .22);
-  font-family: var(--font-mono);
-}
-
-.md-code-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, .18);
-  border-radius: 4px;
-  padding: 2px 7px;
-  transition: all .1s;
-}
-
-.md-code-copy:hover {
-  background: rgba(255, 255, 255, .04);
-  color: rgba(255, 255, 255, .5);
-}
-
-.md-code-block>div {
-  max-height: 500px;
-  overflow: auto;
-  scrollbar-width: thin;
-}
-
+/* ── Code blocks — styles now in components.css (md-code-block, md-code-float-copy, etc.) ── */
 .md-inline-code {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -490,6 +439,28 @@ textarea {
   padding: 1px 5px;
   color: rgba(255, 255, 255, .76);
   word-break: break-word;
+}
+
+/* ── Hyperlinks ── */
+.md-link {
+  color: #22d3ee;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(34,211,238,0.3);
+  transition: border-color .12s, color .12s;
+}
+
+.md-link:hover {
+  color: #67e8f9;
+  border-bottom-color: rgba(103,232,249,0.6);
+}
+
+.md-link-icon {
+  display: inline-block;
+  font-size: 10px;
+  margin-left: 2px;
+  opacity: 0.6;
+  vertical-align: super;
+  line-height: 1;
 }
 
 /* ── Markdown body ───────────────────────────────────────────────────────── */

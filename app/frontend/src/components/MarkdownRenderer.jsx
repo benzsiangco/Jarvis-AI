@@ -6,6 +6,7 @@ import { useState, useRef } from 'react';
 import { Copy, Check, WrapText, ChevronDown, ChevronRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import ImageCarousel from './ImageCarousel';
 import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
@@ -82,8 +83,8 @@ export default function MarkdownRenderer({ content, compact = false }) {
   if (!content) return null;
   const text = sanitizeToolCalls(content);
 
-  // Split on special markers: [VIDEO:id] and [BOX:content]
-  const parts = text.split(/(\[VIDEO:[A-Za-z0-9_-]{11}\]|\[BOX:[^\]]{1,500}\])/g);
+  // Split on special markers: [VIDEO:id], [BOX:content], [IMAGES:base64]
+  const parts = text.split(/(\[VIDEO:[A-Za-z0-9_-]{11}\]|\[BOX:[^\]]{1,500}\]|\[IMAGES:[A-Za-z0-9+/=]{1,8000}\])/g);
 
   if (parts.length > 1) {
     return (
@@ -94,6 +95,14 @@ export default function MarkdownRenderer({ content, compact = false }) {
 
           const boxMatch = part.match(/^\[BOX:([^\]]{1,500})\]$/);
           if (boxMatch) return <CopyBox key={i} value={boxMatch[1]} />;
+
+          const imagesMatch = part.match(/^\[IMAGES:([A-Za-z0-9+/=]{1,8000})\]$/);
+          if (imagesMatch) {
+            try {
+              const decoded = JSON.parse(decodeURIComponent(escape(atob(imagesMatch[1]))));
+              return <ImageCarousel key={i} images={decoded.images || []} query={decoded.query || ''} />;
+            } catch { return null; }
+          }
 
           if (!part.trim()) return null;
           return (
@@ -125,7 +134,25 @@ function buildComponents(compact) {
       return <CodeBlock lang={lang} content={raw} compact={compact} />;
     },
     a({ href, children }) {
-      return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+      const isExternal = href && (href.startsWith('http') || href.startsWith('//'));
+      const handleClick = (e) => {
+        if (isExternal) {
+          e.preventDefault();
+          window.open(href, '_blank');
+        }
+      };
+      return (
+        <a
+          href={href}
+          onClick={handleClick}
+          target={isExternal ? '_blank' : undefined}
+          rel={isExternal ? 'noopener noreferrer' : undefined}
+          className="md-link"
+        >
+          {children}
+          {isExternal && <span className="md-link-icon">↗</span>}
+        </a>
+      );
     },
     img({ src, alt }) {
       return <img src={src} alt={alt || ''} loading="lazy" />;
@@ -193,18 +220,20 @@ function CodeBlock({ lang, content, compact }) {
   const [collapsed, setCollapsed] = useState(false);
   const lines = content.split('\n');
   const isLong = lines.length > COLLAPSE_THRESHOLD;
+  // Plain text / tree blocks — no syntax highlighting, just monospace card
+  const isPlain = !lang || lang === 'text' || lang === 'plaintext';
 
   const fontSize = compact ? '11.5px' : '12.5px';
   const hlStyle = {
     ...oneDark,
     'pre[class*="language-"]': {
       ...oneDark['pre[class*="language-"]'],
-      background: 'rgba(12,14,18,0.85)',
+      background: 'transparent',
       margin: 0,
       borderRadius: 0,
-      padding: compact ? '10px 12px' : '14px 16px',
+      padding: compact ? '12px 14px' : '14px 16px',
       fontSize,
-      lineHeight: '1.65',
+      lineHeight: '1.7',
       whiteSpace: wrap ? 'pre-wrap' : 'pre',
       wordBreak: wrap ? 'break-all' : 'normal',
     },
@@ -221,59 +250,54 @@ function CodeBlock({ lang, content, compact }) {
     setTimeout(() => setCopied(false), 1400);
   };
 
-  const handleCopyMd = () => {
-    navigator.clipboard.writeText(`\`\`\`${lang}\n${content}\n\`\`\``);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1400);
-  };
-
   const displayContent = collapsed ? lines.slice(0, 8).join('\n') + '\n...' : content;
 
   return (
     <div className="md-code-block">
-      {/* Sticky header */}
-      <div className="md-code-header">
-        <span className="md-code-lang">{lang || 'text'}</span>
-        {isLong && (
+      {/* Floating copy button — top right, always visible on hover */}
+      <button className="md-code-float-copy" onClick={handleCopy} title="Copy">
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+      </button>
+
+      {/* Language badge + controls — only show for non-plain blocks */}
+      {!isPlain && (
+        <div className="md-code-header">
+          <span className="md-code-lang">{lang}</span>
+          {isLong && (
+            <button className="md-code-action" onClick={() => setCollapsed((v) => !v)}>
+              {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+              <span>{collapsed ? `${lines.length} lines` : 'collapse'}</span>
+            </button>
+          )}
           <button
             className="md-code-action"
-            onClick={() => setCollapsed((v) => !v)}
-            title={collapsed ? 'Expand' : 'Collapse'}
+            onClick={() => setWrap((v) => !v)}
+            style={{ color: wrap ? 'rgba(34,211,238,0.7)' : undefined }}
+            title={wrap ? 'Disable wrap' : 'Wrap lines'}
           >
-            {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
-            <span>{collapsed ? `${lines.length} lines` : 'collapse'}</span>
-          </button>
-        )}
-        <button
-          className="md-code-action"
-          onClick={() => setWrap((v) => !v)}
-          title={wrap ? 'Disable wrap' : 'Wrap lines'}
-          style={{ color: wrap ? 'rgba(34,211,238,0.7)' : undefined }}
-        >
-          <WrapText size={10} />
-        </button>
-        <div className="md-code-copy-group">
-          <button className="md-code-copy" onClick={handleCopy} title="Copy code">
-            {copied ? <Check size={11} /> : <Copy size={11} />}
-            <span>{copied ? 'Copied' : 'Copy'}</span>
-          </button>
-          <button className="md-code-copy md-code-copy-md" onClick={handleCopyMd} title="Copy as Markdown">
-            <span>MD</span>
+            <WrapText size={10} />
           </button>
         </div>
-      </div>
+      )}
+
       <div className={`md-code-body${collapsed ? ' md-code-collapsed' : ''}`}>
-        <SyntaxHighlighter
-          language={lang || 'text'}
-          style={hlStyle}
-          wrapLongLines={wrap}
-          PreTag="div"
-          showLineNumbers={lines.length > 5}
-          lineNumberStyle={{ color: 'rgba(255,255,255,0.12)', fontSize: '10px', minWidth: '2.5em', paddingRight: '12px', userSelect: 'none' }}
-        >
-          {displayContent}
-        </SyntaxHighlighter>
+        {isPlain ? (
+          // Plain text — simple pre, no syntax highlighting
+          <pre className="md-code-plain">{displayContent}</pre>
+        ) : (
+          <SyntaxHighlighter
+            language={lang}
+            style={hlStyle}
+            wrapLongLines={wrap}
+            PreTag="div"
+            showLineNumbers={lines.length > 5}
+            lineNumberStyle={{ color: 'rgba(255,255,255,0.12)', fontSize: '10px', minWidth: '2.5em', paddingRight: '12px', userSelect: 'none' }}
+          >
+            {displayContent}
+          </SyntaxHighlighter>
+        )}
       </div>
+
       {collapsed && (
         <button className="md-code-expand-btn" onClick={() => setCollapsed(false)}>
           Show all {lines.length} lines

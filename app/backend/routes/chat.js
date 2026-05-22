@@ -78,6 +78,7 @@ searchCode   → args: { query: string }
 listFiles    → args: { path: string }
 searchInternet → args: { query: string, maxResults?: number }
 webFetch     → args: { url: string }
+searchImages → args: { query: string, maxResults?: number }
 rememberFact → args: { content: string, tags?: string[] }
 recallMemory → args: { query?: string }
 forgetFact   → args: { id: string }
@@ -235,7 +236,38 @@ export async function chatRoute(req) {
         // Initial context analysis
         emitContextAnalysis(emit, messages, workspacePath);
 
-        // ── Pre-flight: intercept video requests and execute playVideo directly ──
+        // ── Pre-flight: intercept image search requests ──
+        const isImageRequest = /\b(show|find|search|display|get|give me|look up)\b.{0,30}\b(image|photo|picture|pic|wallpaper|screenshot)s?\b/i.test(lastContent)
+          || /\bimage of\b|\bphotos? of\b|\bpictures? of\b/i.test(lastContent);
+        if (isImageRequest) {
+          emit({ type: 'searching', message: 'Searching images…' });
+          try {
+            const q = lastContent
+              .replace(/^(show me|find|search for|display|get me|give me|look up)\s*/i, '')
+              .replace(/\s*(images?|photos?|pictures?|pics?|wallpapers?)\s*(of|for)?\s*/i, ' ')
+              .trim() || lastContent.trim();
+            const toolCall = { tool: 'searchImages', args: { query: q, maxResults: 10 } };
+            const toolResult = await executeTool(toolCall, context, emit);
+            send('tool_result', { tool: 'searchImages', result: toolResult, round: 0 });
+            if (toolResult.success && toolResult.result?.images?.length) {
+              const images = toolResult.result.images.slice(0, 12);
+              const payload = JSON.stringify({ query: q, images });
+              const encoded = btoa(unescape(encodeURIComponent(payload)));
+              const response = `[IMAGES:${encoded}] Here are the images for "${q}", sir.`;
+              send('data', { choices: [{ delta: { content: response } }] });
+            } else {
+              send('data', { choices: [{ delta: { content: `I couldn't find images for that, sir.` } }] });
+            }
+            emit({ type: 'done', message: 'Done' });
+            try { send('done', {}); } catch {}
+            try { controller.close(); } catch {}
+            return;
+          } catch (e) {
+            // Fall through to normal agent loop
+          }
+        }
+
+        // ── Pre-flight: intercept video requests ──
         // Small models (Gemma, Nemotron) refuse to use playVideo despite instructions.
         // Detect the intent server-side and bypass the model entirely.
         const isVideoRequest = /\b(play|rickroll|rick roll|show.*video|watch.*video|put on|queue up|youtube)\b/i.test(lastContent);
@@ -397,7 +429,7 @@ async function agentLoop({ history, context, temperature, max_tokens, send, emit
     // For simple terminal commands that return a clear output (date, time, echo, etc.),
     // synthesize the final response directly instead of asking the model again.
     // Small models (Gemma 2B/4B) reliably fail to use tool results in the second call.
-    const directResponse = synthesizeDirectResponse(toolCall, toolResult);
+    const directResponse = await synthesizeDirectResponse(toolCall, toolResult);
     if (directResponse) {
       send('data', { choices: [{ delta: { content: directResponse } }] });
       emit({ type: 'done', message: 'Response complete' });
@@ -1364,7 +1396,7 @@ function getMessageText(content) {
  * Returns a string if we can handle it, null if the LLM should respond.
  * This bypasses the "model ignores tool result" bug in small models.
  */
-function synthesizeDirectResponse(toolCall, toolResult) {
+async function synthesizeDirectResponse(toolCall, toolResult) {
   const { tool, args } = toolCall;
   if (!toolResult?.success) return null;
 
@@ -1430,10 +1462,18 @@ function synthesizeDirectResponse(toolCall, toolResult) {
   if (tool === 'listFiles') {
     const items = toolResult?.result?.items || [];
     const dirPath = args.path || '.';
-    if (!items.length) return `No files found in \`${dirPath}\`, sir.`;
-    const list = items.slice(0, 50).map((i) => `${i.type === 'directory' ? '📁' : '📄'} ${i.name}`).join('\n');
-    const suffix = items.length > 50 ? `\n...(${items.length - 50} more)` : '';
-    return `Contents of \`${dirPath}\`:\n${list}${suffix}`;
+    const dirName = dirPath.split(/[/\\]/).pop() || dirPath;
+    if (!items.length) return `\`${dirName}\` is empty, sir.`;
+
+    // Build a proper ASCII tree
+    const lines = [`${dirName}/`];
+    items.forEach((item, i) => {
+      const isLast = i === items.length - 1;
+      const prefix = isLast ? '└── ' : '├── ';
+      const suffix = item.type === 'directory' ? '/' : '';
+      lines.push(`${prefix}${item.name}${suffix}`);
+    });
+    return `\`\`\`\n${lines.join('\n')}\n\`\`\``;
   }
 
   if (tool === 'searchCode') {
@@ -1445,9 +1485,38 @@ function synthesizeDirectResponse(toolCall, toolResult) {
 
   if (tool === 'searchInternet') {
     const results = toolResult?.result?.results || [];
-    if (!results.length) return `No web results found for "${args.query}", sir.`;
-    const list = results.slice(0, 5).map((r, i) => `${i + 1}. **${r.title}**\n   ${r.snippet}`).join('\n');
-    return `Here's what I found for "${args.query}", sir:\n${list}`;
+    const query = args.query || '';
+    if (!results.length) return `No web results found for "${query}", sir.`;
+
+    // Check if this looks like a person/entity search
+    const isPersonQuery = /\bwho is\b|\bwho was\b|\babout\b|\bprofile\b|\bactor\b|\bsinger\b|\bplayer\b|\bpresident\b|\bceo\b|\bfounder\b/i.test(query)
+      || /^[A-Z][a-z]+ [A-Z][a-z]+/.test(query.trim());
+
+    const list = results.slice(0, 5).map((r, i) => `${i + 1}. **[${r.title}](${r.url})**\n   ${r.snippet}`).join('\n');
+    let response = `Here's what I found for "${query}", sir:\n${list}`;
+
+    // Auto-append images for person/entity queries
+    if (isPersonQuery) {
+      try {
+        const imgToolResult = await executeTool({ tool: 'searchImages', args: { query, maxResults: 6 } }, {}, () => {});
+        if (imgToolResult?.success && imgToolResult.result?.images?.length) {
+          const payload = JSON.stringify({ query, images: imgToolResult.result.images.slice(0, 6) });
+          const encoded = Buffer.from(payload).toString('base64');
+          response = `[IMAGES:${encoded}]\n${response}`;
+        }
+      } catch {}
+    }
+
+    return response;
+  }
+
+  if (tool === 'searchImages') {
+    const images = toolResult?.result?.images || [];
+    if (!images.length) return `No images found for "${args.query}", sir.`;
+    // Encode images as a compact JSON marker for the frontend carousel
+    const payload = JSON.stringify({ query: args.query, images: images.slice(0, 12) });
+    const encoded = Buffer.from(payload).toString('base64');
+    return `[IMAGES:${encoded}] Here are the images for "${args.query}", sir.`;
   }
 
   if (tool === 'webFetch') {
