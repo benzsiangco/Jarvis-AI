@@ -248,38 +248,92 @@ async function execSearchImages({ query, maxResults }, ctx) {
   if (!query) throw new Error('query is required');
   const count = Math.min(Math.max(Number(maxResults) || 8, 1), 20);
 
-  // Use DuckDuckGo Images API (no key needed)
-  const url = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`;
-  const tokenRes = await fetch('https://duckduckgo.com/', {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-    signal: AbortSignal.timeout(8000),
-  });
-  const tokenHtml = await tokenRes.text();
-  const vqdMatch = tokenHtml.match(/vqd=([\d-]+)/);
-  const vqd = vqdMatch ? vqdMatch[1] : '';
+  // Strategy 1: DuckDuckGo Images API with fresh vqd token
+  try {
+    // Get fresh vqd token
+    const homeRes = await fetch(`https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    const homeHtml = await homeRes.text();
 
-  const apiUrl = `https://duckduckgo.com/i.js?q=${encodeURIComponent(query)}&o=json&p=1&s=0&u=bing&f=,,,&l=us-en${vqd ? `&vqd=${vqd}` : ''}`;
-  const res = await fetch(apiUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': 'https://duckduckgo.com/',
-      'Accept': 'application/json',
-    },
-    signal: AbortSignal.timeout(10000),
-  });
+    // Extract vqd — try multiple patterns
+    let vqd = '';
+    const vqdPatterns = [
+      /vqd=['"]?([\d-]+)['"]?/,
+      /vqd=([\d-]+)/,
+      /"vqd":"([\d-]+)"/,
+    ];
+    for (const p of vqdPatterns) {
+      const m = homeHtml.match(p);
+      if (m) { vqd = m[1]; break; }
+    }
 
-  if (!res.ok) throw new Error(`Image search failed: HTTP ${res.status}`);
-  const data = await res.json();
-  const results = (data.results || []).slice(0, count).map((r) => ({
-    url: r.image,
-    thumb: r.thumbnail,
-    title: r.title || '',
-    source: r.url || '',
-    width: r.width,
-    height: r.height,
-  })).filter((r) => r.url);
+    if (!vqd) throw new Error('Could not get vqd token');
 
-  return { query, images: results, total: results.length };
+    const apiUrl = `https://duckduckgo.com/i.js?q=${encodeURIComponent(query)}&o=json&p=1&s=0&u=bing&f=,,,&l=us-en&vqd=${vqd}`;
+    const res = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://duckduckgo.com/',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) throw new Error(`DDG images HTTP ${res.status}`);
+    const data = await res.json();
+    const results = (data.results || []).slice(0, count).map((r) => ({
+      url: r.image,
+      thumb: r.thumbnail,
+      title: r.title || '',
+      source: r.url || '',
+      width: r.width,
+      height: r.height,
+    })).filter((r) => r.url && r.url.startsWith('http'));
+
+    if (results.length > 0) return { query, images: results, total: results.length };
+    throw new Error('No results from DDG');
+  } catch (ddgErr) {
+    // Strategy 2: Bing Images scrape fallback
+    try {
+      const bingUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&form=HDRSC2&first=1&count=${count}`;
+      const res = await fetch(bingUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      const html = await res.text();
+
+      // Extract image data from Bing's JSON blobs in the page
+      const results = [];
+      const imgRe = /"murl":"([^"]+)","turl":"([^"]+)"[^}]*"t":"([^"]*)"[^}]*"purl":"([^"]*)"/g;
+      let m;
+      while ((m = imgRe.exec(html)) !== null && results.length < count) {
+        const imgUrl = m[1].replace(/\\u0026/g, '&');
+        const thumb = m[2].replace(/\\u0026/g, '&');
+        const title = m[3] || '';
+        const source = m[4].replace(/\\u0026/g, '&') || '';
+        if (imgUrl.startsWith('http')) {
+          results.push({ url: imgUrl, thumb, title, source, width: null, height: null });
+        }
+      }
+
+      if (results.length > 0) return { query, images: results, total: results.length };
+      throw new Error('No results from Bing');
+    } catch (bingErr) {
+      throw new Error(`Image search failed — DDG: ${ddgErr.message} | Bing: ${bingErr.message}`);
+    }
+  }
 }
 
 async function execWebFetch({ url, selector }, ctx) {
