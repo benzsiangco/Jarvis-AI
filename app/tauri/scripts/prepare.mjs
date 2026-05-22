@@ -109,10 +109,29 @@ async function main() {
     console.warn(`[tauri-prep] llama-cpp not found at ${SRC_LLAMA} — skipping`);
   }
 
-  // 3. Patch tauri.conf.json's bundle.resources so llama-cpp/ ships
+  // 3. Voice sidecar scripts
+  const SRC_VOICE = path.join(REPO_ROOT, 'app', 'voice');
+  const VOICE_DEST = path.join(RES_DIR, 'voice');
+  if (existsSync(SRC_VOICE)) {
+    if (existsSync(VOICE_DEST)) {
+      await fs.rm(VOICE_DEST, { recursive: true, force: true });
+    }
+    await fs.mkdir(VOICE_DEST, { recursive: true });
+    // Copy only the Python scripts (not large binary files)
+    const voiceFiles = ['sidecar.py', 'launch.py', 'requirements.txt'];
+    for (const f of voiceFiles) {
+      const src = path.join(SRC_VOICE, f);
+      if (existsSync(src)) {
+        await fs.copyFile(src, path.join(VOICE_DEST, f));
+      }
+    }
+    console.log(`[tauri-prep] copied voice scripts → ${path.relative(TAURI_DIR, VOICE_DEST)}`);
+  }
+
+  // 4. Patch tauri.conf.json's bundle.resources
   const conf = JSON.parse(await fs.readFile(CONF_PATH, 'utf8'));
   conf.bundle = conf.bundle || {};
-  conf.bundle.resources = ['resources/llama-cpp/**/*'];
+  conf.bundle.resources = ['resources/llama-cpp/**/*', 'resources/voice/**/*'];
   await fs.writeFile(CONF_PATH, JSON.stringify(conf, null, 2));
   console.log('[tauri-prep] patched tauri.conf.json bundle.resources');
 }

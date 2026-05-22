@@ -83,6 +83,26 @@ pub fn start(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Try to auto-launch the voice sidecar (Python) if Python is available.
+    // Non-fatal — voice just won't work if Python isn't installed.
+    let voice_script = res_root.join("voice").join("launch.py");
+    if voice_script.exists() {
+        let python_cmds = ["python3", "python", "py"];
+        for py in &python_cmds {
+            let result = std::process::Command::new(py)
+                .arg(&voice_script)
+                .env("JARVIS_VOICE_PORT", "6970")
+                .env("JARVIS_WHISPER_MODEL", "base.en")
+                .env("JARVIS_WHISPER_DEVICE", "cpu")
+                .env("JARVIS_WHISPER_COMPUTE", "int8")
+                .spawn();
+            if result.is_ok() {
+                eprintln!("[voice] launched via {}", py);
+                break;
+            }
+        }
+    }
+
     Ok(())
 }
 

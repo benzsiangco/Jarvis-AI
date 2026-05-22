@@ -43,7 +43,8 @@
       "../frontend/public/logo.png"
     ],
     "resources": [
-      "resources/llama-cpp/**/*"
+      "resources/llama-cpp/**/*",
+      "resources/voice/**/*"
     ],
     "externalBin": [
       "binaries/server"
