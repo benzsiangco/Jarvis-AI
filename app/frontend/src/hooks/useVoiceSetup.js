@@ -102,22 +102,32 @@ export default function useVoiceSetup(backendUrl) {
   }, [connect]);
 
   const startInstall = useCallback(async () => {
+    // Reset server state first so we don't get 409 on retry
+    try { await fetch(`${backendUrl}/api/voice/setup/reset`, { method: 'POST' }); } catch {}
     setStatus('installing');
     setPackages(makePackages());
     setLog([]);
     try {
-      await fetch(`${backendUrl}/api/voice/setup/start`, { method: 'POST' });
+      const res = await fetch(`${backendUrl}/api/voice/setup/start`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus('error');
+        setLog([data.error || `HTTP ${res.status}`]);
+      } else if (data.python) {
+        setLog([`Using ${data.python}`]);
+      }
     } catch (e) {
       setStatus('error');
       setLog([`Failed to start: ${e.message}`]);
     }
   }, [backendUrl]);
 
-  const retry = useCallback(() => {
+  const retry = useCallback(async () => {
+    try { await fetch(`${backendUrl}/api/voice/setup/reset`, { method: 'POST' }); } catch {}
     setStatus('idle');
     setPackages(makePackages());
     setLog([]);
-  }, []);
+  }, [backendUrl]);
 
   return { status, packages, log, startInstall, retry };
 }

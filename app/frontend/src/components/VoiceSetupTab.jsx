@@ -64,9 +64,14 @@ export default function VoiceSetupTab({ backendUrl }) {
           </button>
         )}
         {status === 'installing' && (
-          <button className="vst-btn vst-btn-disabled" disabled>
-            <Loader2 size={13} className="vst-spin" /> Installing…
-          </button>
+          <>
+            <button className="vst-btn vst-btn-disabled" disabled>
+              <Loader2 size={13} className="vst-spin" /> Installing…
+            </button>
+            <button className="vst-btn vst-btn-warn" onClick={retry} style={{ marginLeft: 8 }}>
+              <RefreshCw size={13} /> Cancel
+            </button>
+          </>
         )}
         {status === 'done' && (
           <div className="vst-done-msg">
@@ -76,7 +81,7 @@ export default function VoiceSetupTab({ backendUrl }) {
         )}
         {status === 'error' && (
           <button className="vst-btn vst-btn-warn" onClick={retry}>
-            <RefreshCw size={13} /> Retry
+            <RefreshCw size={13} /> Reset &amp; Retry
           </button>
         )}
       </div>

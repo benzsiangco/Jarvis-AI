@@ -18,7 +18,6 @@ import {
   getVoiceConfigPublic,
   setVoiceConfig,
 } from '../services/voiceConfig.js';
-import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -32,9 +31,14 @@ let setupClients = new Set(); // SSE response controllers
 
 function broadcastSetup(event) {
   const line = `data: ${JSON.stringify(event)}\n\n`;
-  for (const ctrl of setupClients) {
-    try { ctrl.enqueue(new TextEncoder().encode(line)); } catch {}
+  const encoded = new TextEncoder().encode(line);
+  for (const ctrl of [...setupClients]) {
+    try { ctrl.enqueue(encoded); } catch { setupClients.delete(ctrl); }
   }
+}
+
+function resetSetup() {
+  setupState = 'idle';
 }
 
 export async function voiceRoute(req, url) {
@@ -87,11 +91,16 @@ export async function voiceRoute(req, url) {
   if (path === '/api/voice/setup' && method === 'GET') {
     let ctrl;
     const stream = new ReadableStream({
-      start(c) { ctrl = c; },
+      start(c) {
+        ctrl = c;
+        setupClients.add(ctrl);
+        // Send current state immediately so UI syncs on connect
+        try {
+          ctrl.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ event: 'state', status: setupState })}\n\n`));
+        } catch {}
+      },
       cancel() { setupClients.delete(ctrl); },
     });
-    setupClients.add(ctrl);
-    ctrl.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ event: 'state', status: setupState })}\n\n`));
     return new Response(stream, {
       headers: {
         'Content-Type': 'text/event-stream',
@@ -102,81 +111,137 @@ export async function voiceRoute(req, url) {
     });
   }
 
+  // ── Voice Setup reset (allow retry) ──────────────────────────────────────
+  if (path === '/api/voice/setup/reset' && method === 'POST') {
+    resetSetup();
+    broadcastSetup({ event: 'state', status: 'idle' });
+    return Response.json({ ok: true });
+  }
+
   // ── Voice Setup trigger ───────────────────────────────────────────────────
   if (path === '/api/voice/setup/start' && method === 'POST') {
+    // Allow restart if previous attempt errored or is stale
     if (setupState === 'installing') {
       return Response.json({ ok: false, error: 'Already installing' }, { status: 409 });
     }
     setupState = 'installing';
     broadcastSetup({ event: 'state', status: 'installing' });
 
+    // Find launch.py — packaged path first, then dev path
     const resRoot = process.env.JARVIS_BIN_ROOT || '';
     const devRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'voice');
     const candidates = [
-      join(resRoot, 'voice', 'launch.py'),
+      resRoot ? join(resRoot, 'voice', 'launch.py') : null,
       join(devRoot, 'launch.py'),
-    ];
+    ].filter(Boolean);
     const launchPy = candidates.find(existsSync);
 
     if (!launchPy) {
       setupState = 'error';
-      broadcastSetup({ event: 'error', name: 'launch', message: 'launch.py not found' });
+      broadcastSetup({ event: 'error', name: 'launch', message: 'launch.py not found. Voice scripts may not be bundled.' });
       broadcastSetup({ event: 'state', status: 'error' });
       return Response.json({ ok: false, error: 'launch.py not found' }, { status: 500 });
     }
 
-    const pythonCmds = ['python3', 'python', 'py'];
+    // Try python commands in order
+    const pythonCmds = ['python', 'python3', 'py'];
     let proc = null;
+    let usedPy = null;
+
     for (const py of pythonCmds) {
       try {
-        proc = spawn(py, [launchPy], {
-          env: { ...process.env, JARVIS_VOICE_PORT: '6970', JARVIS_WHISPER_MODEL: 'base.en', JARVIS_WHISPER_DEVICE: 'cpu', JARVIS_WHISPER_COMPUTE: 'int8' },
-          stdio: ['ignore', 'pipe', 'pipe'],
+        // Use Bun.spawn — more reliable than child_process in Bun runtime
+        proc = Bun.spawn([py, launchPy], {
+          env: {
+            ...process.env,
+            JARVIS_VOICE_PORT: '6970',
+            JARVIS_WHISPER_MODEL: 'base.en',
+            JARVIS_WHISPER_DEVICE: 'cpu',
+            JARVIS_WHISPER_COMPUTE: 'int8',
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+          stdin: null,
+          windowsHide: true,
         });
+        usedPy = py;
         break;
       } catch {}
     }
 
     if (!proc) {
       setupState = 'error';
-      broadcastSetup({ event: 'error', name: 'python', message: 'Python not found. Install Python 3.9+ and try again.' });
+      broadcastSetup({ event: 'error', name: 'python', message: 'Python not found. Please install Python 3.9+ from python.org and try again.' });
       broadcastSetup({ event: 'state', status: 'error' });
       return Response.json({ ok: false, error: 'Python not found' }, { status: 500 });
     }
 
-    let buf = '';
-    proc.stdout.on('data', (chunk) => {
-      buf += chunk.toString();
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const evt = JSON.parse(trimmed);
-          broadcastSetup(evt);
-          if (evt.event === 'ready') {
-            setupState = 'done';
-            broadcastSetup({ event: 'state', status: 'done' });
-          } else if (evt.event === 'failed' || evt.event === 'error') {
-            setupState = 'error';
-            broadcastSetup({ event: 'state', status: 'error' });
+    broadcastSetup({ event: 'log', message: `Using ${usedPy} → ${launchPy}` });
+
+    // Read stdout line by line using Bun's async iterator
+    (async () => {
+      try {
+        const reader = proc.stdout;
+        let buf = '';
+        for await (const chunk of reader) {
+          buf += new TextDecoder().decode(chunk);
+          const lines = buf.split('\n');
+          buf = lines.pop() ?? '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const evt = JSON.parse(trimmed);
+              broadcastSetup(evt);
+              if (evt.event === 'ready' || evt.event === 'all_installed') {
+                setupState = 'done';
+                broadcastSetup({ event: 'state', status: 'done' });
+              } else if (evt.event === 'failed' || evt.event === 'error') {
+                setupState = 'error';
+                broadcastSetup({ event: 'state', status: 'error' });
+              }
+            } catch {
+              // Non-JSON line — send as log
+              broadcastSetup({ event: 'log', message: trimmed });
+            }
           }
-        } catch {}
+        }
+        // Flush remaining buffer
+        if (buf.trim()) {
+          try {
+            const evt = JSON.parse(buf.trim());
+            broadcastSetup(evt);
+          } catch {
+            broadcastSetup({ event: 'log', message: buf.trim() });
+          }
+        }
+      } catch (e) {
+        broadcastSetup({ event: 'log', message: `stdout error: ${e.message}` });
       }
-    });
-    proc.stderr.on('data', (chunk) => {
-      const msg = chunk.toString().trim();
-      if (msg) broadcastSetup({ event: 'log', message: msg });
-    });
-    proc.on('close', (code) => {
+    })();
+
+    // Read stderr
+    (async () => {
+      try {
+        for await (const chunk of proc.stderr) {
+          const msg = new TextDecoder().decode(chunk).trim();
+          if (msg) broadcastSetup({ event: 'log', message: msg });
+        }
+      } catch {}
+    })();
+
+    // Watch for process exit
+    proc.exited.then((code) => {
       if (setupState === 'installing') {
         setupState = code === 0 ? 'done' : 'error';
+        if (setupState === 'error') {
+          broadcastSetup({ event: 'error', name: 'process', message: `Process exited with code ${code}` });
+        }
         broadcastSetup({ event: 'state', status: setupState });
       }
-    });
+    }).catch(() => {});
 
-    return Response.json({ ok: true });
+    return Response.json({ ok: true, python: usedPy, script: launchPy });
   }
 
   // ── Transcribe ───────────────────────────────────────────────────────
