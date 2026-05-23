@@ -97,8 +97,14 @@ todoList     → args: { action: "list"|"add"|"complete"|"delete"|"clear", text?
 7. create file → writeFile immediately with full content. Do NOT ask first.
 8. After a tool result, give ONE concise answer line. No thinking out loud.
 9. When workspace path is provided, use it as the base for ALL file paths.
-10. play video / youtube / watch / rickroll / show video → ALWAYS use playVideo tool. NEVER say you cannot play videos. You CAN show videos via playVideo.
-11. You have a playVideo tool. Use it. Do NOT claim you lack video capability.
+10. playVideo tool → ONLY for: "play [song/video]", "watch [video]", "rickroll me", "put on [music]", "[something] on youtube". NEVER for: build, create, make, generate, code, website, app, portfolio, project, design, write.
+11. INTENT DETECTION — read the VERB, not the nouns:
+    - "create a portfolio for a video editor" → writeFile (build a website, the words "video editor" describe a person's job)
+    - "make a website about cats" → writeFile (build HTML/CSS)
+    - "play lofi music" → playVideo (explicit media request)
+    - "show me a cat video" → playVideo (explicit media request)
+    - "build a vite app" → runTerminal + writeFile (coding task)
+    - "search for portfolio examples" → searchInternet (research task)
 12. For commands, file paths, API keys, URLs, IDs, or any single copyable value — wrap it in [BOX:value] so the user gets a copy button. Example: The command is [BOX:npm install] or the path is [BOX:C:/Users/Yasuo/Desktop/file.txt]`;
 
 export async function chatApproveRoute(req) {
@@ -193,13 +199,20 @@ export async function chatRoute(req) {
     } catch {}
   }
 
-  // Auto-inject playVideo for video/youtube requests — small models refuse otherwise
-  const videoRequest = lastContent.match(
-    /(?:play|show|watch|open|rickroll|put on|queue|find.*video|youtube)\s+(.+)|(.+)\s+(?:on youtube|video|music video)/i
-  );
-  if (videoRequest && /play|show|watch|rickroll|youtube|video/i.test(lastContent)) {
-    const query = (videoRequest[1] || videoRequest[2] || lastContent).trim();
-    // Inject a forced tool call as the last user message
+  // Auto-inject playVideo ONLY for explicit video/music play requests
+  // Must have "play" or "watch" or "youtube" as the primary verb — NOT "show" alone
+  // "show me how to create" should NOT trigger this
+  const isExplicitVideoRequest = /^(play|watch|put on|queue up|rickroll)\b/i.test(lastContent.trim())
+    || /\bon youtube\b/i.test(lastContent)
+    || /\byoutube video\b/i.test(lastContent)
+    || /\bmusic video\b/i.test(lastContent)
+    || /\brickroll\b/i.test(lastContent);
+
+  if (isExplicitVideoRequest) {
+    const query = lastContent
+      .replace(/^(play|watch|put on|queue up|rickroll me with|rickroll me|rickroll)\s*/i, '')
+      .replace(/\s*(on youtube|youtube video|music video)\s*$/i, '')
+      .trim() || lastContent.trim();
     history[history.length - 1] = {
       ...history[history.length - 1],
       content: `${lastContent}\n[SYSTEM: Use playVideo tool now. Call: {"tool":"playVideo","args":{"query":"${query.replace(/"/g, '')}"}}]`,
@@ -281,9 +294,12 @@ export async function chatRoute(req) {
         }
 
         // ── Pre-flight: intercept video requests ──
-        // Small models (Gemma, Nemotron) refuse to use playVideo despite instructions.
-        // Detect the intent server-side and bypass the model entirely.
-        const isVideoRequest = /\b(play|rickroll|rick roll|show.*video|watch.*video|put on|queue up|youtube)\b/i.test(lastContent);
+        // Only intercept EXPLICIT play/watch/youtube requests — not "show me how to..."
+        const isVideoRequest = /^(play|watch|put on|queue up|rickroll)\b/i.test(lastContent.trim())
+          || /\bon youtube\b/i.test(lastContent)
+          || /\brickroll\b/i.test(lastContent)
+          || /\byoutube video\b/i.test(lastContent)
+          || /\bmusic video\b/i.test(lastContent);
         if (isVideoRequest) {
           emit({ type: 'tool_execution', message: 'Searching YouTube…' });
           try {
@@ -386,6 +402,23 @@ async function agentLoop({ history, context, temperature, max_tokens, send, emit
 
     // Emit a contextual planning message before execution
     emit(buildPreToolEmit(toolCall));
+
+    // ── Guard: block playVideo when request is clearly a creation/coding task ──
+    // The model sometimes confuses "video editor" (job title) with "play video".
+    if (toolCall.tool === 'playVideo') {
+      const userText = getMessageText(history.filter((m) => m.role === 'user').pop()?.content || '');
+      const isCreationTask = /\b(create|make|build|generate|write|code|develop|design|scaffold|init|setup|start|new)\b/i.test(userText)
+        && /\b(website|site|app|application|portfolio|project|page|component|file|vite|react|vue|svelte|html|css|js|ts)\b/i.test(userText);
+      if (isCreationTask) {
+        // Inject a correction and let the model retry with the right tool
+        emit({ type: 'analyzing', message: 'Correcting tool selection — this is a creation task, not a video request.' });
+        history.push(
+          { role: 'assistant', content: JSON.stringify(toolCall) },
+          { role: 'user', content: `[CORRECTION] You called playVideo but the user wants to CREATE something, not watch a video. The words "video editor" describe a person\'s job title, not a video to play. Use writeFile, runTerminal, or searchInternet instead. Re-read the request and use the correct tool.` },
+        );
+        continue; // retry next round with correction injected
+      }
+    }
 
     // Permission gate
     const needsApproval = needsToolApproval(toolCall, context.mode);
@@ -1333,7 +1366,8 @@ CRITICAL RULES:
 4. time/date → runTerminal "date". ping → runTerminal "ping google.com". name → recallMemory.
 5. create file → writeFile with full content immediately. Do NOT ask first.
 6. After tool result, answer in ONE line. No thinking out loud.
-7. askQuestion options must be real choices, not placeholder letters.`;
+7. askQuestion options must be real choices, not placeholder letters.
+8. playVideo → ONLY for explicit "play [song]", "watch [video]", "rickroll me". NEVER for create/build/make/code/website/portfolio tasks. "video editor" = job title, not a video to play.`;
 
   return prompt + ctx + toolsSection;
 }
