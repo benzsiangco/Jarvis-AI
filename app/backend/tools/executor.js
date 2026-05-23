@@ -246,9 +246,116 @@ async function execSearchInternet({ query, maxResults }, ctx) {
 
 async function execSearchImages({ query, maxResults }, ctx) {
   if (!query) throw new Error('query is required');
-  const count = Math.min(Math.max(Number(maxResults) || 8, 1), 20);
+  const count = Math.min(Math.max(Number(maxResults) || 10, 1), 20);
 
-  // Strategy 1: Openverse (WordPress Foundation) — free, no key, real photos
+  // Strategy 1: Google Images via scraping (most reliable for people/places/things)
+  try {
+    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch&num=${count}&safe=active`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,*/*;q=0.9',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.google.com/',
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) throw new Error(`Google HTTP ${res.status}`);
+    const html = await res.text();
+
+    // Extract image URLs from Google's JSON data blobs
+    const results = [];
+    // Pattern 1: AF_initDataCallback with image data
+    const jsonBlocks = html.matchAll(/\["(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp|gif)[^"]*)",(\d+),(\d+)\]/gi);
+    for (const m of jsonBlocks) {
+      if (results.length >= count) break;
+      const imgUrl = m[1];
+      if (imgUrl.includes('gstatic') || imgUrl.includes('google.com')) continue;
+      results.push({
+        url: imgUrl,
+        thumb: imgUrl,
+        title: query,
+        source: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
+        width: parseInt(m[2]) || null,
+        height: parseInt(m[3]) || null,
+      });
+    }
+
+    // Pattern 2: ou":"URL" format in Google's data
+    if (results.length < 3) {
+      const ouMatches = html.matchAll(/"ou":"(https?:\/\/[^"]+)"/g);
+      for (const m of ouMatches) {
+        if (results.length >= count) break;
+        const imgUrl = m[1].replace(/\\u003d/g, '=').replace(/\\u0026/g, '&');
+        if (!imgUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) continue;
+        results.push({
+          url: imgUrl,
+          thumb: imgUrl,
+          title: query,
+          source: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
+          width: null,
+          height: null,
+        });
+      }
+    }
+
+    if (results.length >= 3) return { query, images: results.slice(0, count), total: results.length, source: 'google' };
+    throw new Error(`Only ${results.length} Google results`);
+  } catch (googleErr) {
+
+  // Strategy 2: Bing Images scraping
+  try {
+    const url = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&count=${count}&safeSearch=Moderate`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) throw new Error(`Bing HTTP ${res.status}`);
+    const html = await res.text();
+
+    const results = [];
+    // Bing stores image data in murl attribute
+    const murlRe = /murl&quot;:&quot;(https?:\/\/[^&"]+)&quot;/g;
+    let m;
+    while ((m = murlRe.exec(html)) !== null && results.length < count) {
+      const imgUrl = m[1];
+      if (!imgUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) continue;
+      results.push({
+        url: imgUrl,
+        thumb: imgUrl,
+        title: query,
+        source: `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
+        width: null,
+        height: null,
+      });
+    }
+
+    // Also try the JSON format Bing uses
+    if (results.length < 3) {
+      const jsonRe = /"murl":"(https?:\/\/[^"]+)"/g;
+      while ((m = jsonRe.exec(html)) !== null && results.length < count) {
+        const imgUrl = m[1];
+        if (!imgUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) continue;
+        results.push({
+          url: imgUrl,
+          thumb: imgUrl,
+          title: query,
+          source: `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
+          width: null,
+          height: null,
+        });
+      }
+    }
+
+    if (results.length >= 3) return { query, images: results.slice(0, count), total: results.length, source: 'bing' };
+    throw new Error(`Only ${results.length} Bing results`);
+  } catch (bingErr) {
+
+  // Strategy 3: Openverse (creative commons — good for generic subjects)
   try {
     const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&page_size=${count}&license_type=commercial,modification`;
     const res = await fetch(url, {
@@ -266,37 +373,37 @@ async function execSearchImages({ query, maxResults }, ctx) {
       height: r.height || null,
     })).filter((r) => r.url?.startsWith('http'));
 
-    if (results.length >= 3) return { query, images: results, total: results.length, source: 'openverse' };
-    throw new Error(`Only ${results.length} results`);
+    if (results.length >= 2) return { query, images: results, total: results.length, source: 'openverse' };
+    throw new Error(`Only ${results.length} Openverse results`);
   } catch (openverseErr) {
-    // Strategy 2: Wikimedia Commons — encyclopedic images, always reliable
-    try {
-      const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=${count}&prop=imageinfo&iiprop=url|thumburl&iiurlwidth=400&format=json&origin=*`;
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'JarvisAI/1.0' },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) throw new Error(`Wikimedia HTTP ${res.status}`);
-      const data = await res.json();
-      const pages = Object.values(data.query?.pages || {});
-      const results = pages.slice(0, count).map((p) => {
-        const info = p.imageinfo?.[0] || {};
-        return {
-          url: info.url || '',
-          thumb: info.thumburl || info.url || '',
-          title: p.title?.replace(/^File:/, '') || query,
-          source: `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}`,
-          width: null,
-          height: null,
-        };
-      }).filter((r) => r.url?.startsWith('http'));
 
-      if (results.length > 0) return { query, images: results, total: results.length, source: 'wikimedia' };
-      throw new Error('No Wikimedia results');
-    } catch (wikiErr) {
-      throw new Error(`Image search failed — Openverse: ${openverseErr.message} | Wikimedia: ${wikiErr.message}`);
-    }
-  }
+  // Strategy 4: Wikimedia Commons
+  try {
+    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=${count}&prop=imageinfo&iiprop=url|thumburl&iiurlwidth=600&format=json&origin=*`;
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'JarvisAI/1.0' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) throw new Error(`Wikimedia HTTP ${res.status}`);
+    const data = await res.json();
+    const pages = Object.values(data.query?.pages || {});
+    const results = pages.slice(0, count).map((p) => {
+      const info = p.imageinfo?.[0] || {};
+      return {
+        url: info.url || '',
+        thumb: info.thumburl || info.url || '',
+        title: p.title?.replace(/^File:/, '') || query,
+        source: `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}`,
+        width: null,
+        height: null,
+      };
+    }).filter((r) => r.url?.startsWith('http'));
+
+    if (results.length > 0) return { query, images: results, total: results.length, source: 'wikimedia' };
+    throw new Error('No Wikimedia results');
+  } catch (wikiErr) {
+    throw new Error(`Image search failed — Google: ${googleErr.message} | Bing: ${bingErr.message} | Openverse: ${openverseErr.message} | Wikimedia: ${wikiErr.message}`);
+  }}}}}
 }
 
 async function execWebFetch({ url, selector }, ctx) {

@@ -149,11 +149,24 @@ export async function chatRoute(req) {
   const context = { mode: permissionMode, workspacePath, send: null }; // send injected below
   const thinkingInstruction = thinkingMode
     ? '\n\nREASONING: Think step by step before answering. Use <think> tags for your reasoning.'
-    : '\n\nIMPORTANT: Do NOT use <think> tags. Do NOT reason out loud. Reply directly and immediately with no preamble.';
+    : '\n\n/no_think\nIMPORTANT: Do NOT use <think> tags. Do NOT reason out loud. Reply directly and immediately with no preamble. Your response must start with the answer, not with thinking.';
   const history = [
     { role: 'system', content: await buildSystemPrompt(workspacePath) + thinkingInstruction },
     ...sanitized,
   ];
+
+  // For Gemma4 thinking models: append /no_think or /think to the last user message
+  // This is the most reliable way to control thinking at the token level
+  if (history.length > 1) {
+    const lastIdx = history.length - 1;
+    const last = history[lastIdx];
+    if (last.role === 'user' && typeof last.content === 'string') {
+      const suffix = thinkingMode ? '' : ' /no_think';
+      if (suffix && !last.content.endsWith(suffix)) {
+        history[lastIdx] = { ...last, content: last.content + suffix };
+      }
+    }
+  }
 
   // Auto-inject webFetch for pasted URLs in the last user message
   const lastUserMsg = sanitized.filter((m) => m.role === 'user').slice(-1)[0];
