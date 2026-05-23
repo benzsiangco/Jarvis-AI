@@ -133,6 +133,7 @@ export async function chatRoute(req) {
     max_tokens = 2048,
     supportsImages = false,
     thinkingMode = false,
+    agentMode = 'build',  // 'chat' | 'plan' | 'build'
   } = body;
 
   if (!messages?.length) {
@@ -156,8 +157,28 @@ export async function chatRoute(req) {
   const thinkingInstruction = thinkingMode
     ? '\n\nREASONING: Think step by step before answering. Use <think> tags for your reasoning.'
     : '\n\n/no_think\nIMPORTANT: Do NOT use <think> tags. Do NOT reason out loud. Reply directly and immediately with no preamble. Your response must start with the answer, not with thinking.';
+
+  // ── Agent mode instructions ───────────────────────────────────────────────
+  const agentModeInstruction = agentMode === 'plan'
+    ? `\n\n## PLAN MODE — READ ONLY
+You are in PLAN MODE. Your job is to ANALYZE and PROPOSE, not execute.
+ALLOWED: readFile, listFiles, searchCode, searchInternet, webFetch, recallMemory, askQuestion
+FORBIDDEN: writeFile, patchFile, runTerminal, rememberFact, forgetFact, spawnAgent
+Instead of writing files or running commands, describe EXACTLY what you would do:
+- List every file you would create/modify with its full path
+- Show the complete content or diff for each change
+- List every terminal command you would run in order
+- Explain WHY each step is needed
+Format your plan as a numbered checklist the user can review before approving.`
+    : agentMode === 'chat'
+    ? `\n\n## CHAT MODE — CONVERSATION ONLY
+You are in CHAT MODE. Answer questions, explain concepts, and have conversations.
+ALLOWED: recallMemory, searchInternet, webFetch, askQuestion, searchImages, playVideo
+FORBIDDEN: writeFile, patchFile, runTerminal, readFile, listFiles, searchCode, spawnAgent, rememberFact, forgetFact
+Do NOT use any file system or terminal tools. Just talk.`
+    : ''; // build mode = default, no extra restriction
   const history = [
-    { role: 'system', content: await buildSystemPrompt(workspacePath) + thinkingInstruction },
+    { role: 'system', content: await buildSystemPrompt(workspacePath) + thinkingInstruction + agentModeInstruction },
     ...sanitized,
   ];
 
@@ -327,7 +348,7 @@ export async function chatRoute(req) {
           }
         }
 
-        await agentLoop({ history, context, temperature, max_tokens, send, emit, provider: activeProvider, thinkingMode });
+        await agentLoop({ history, context, temperature, max_tokens, send, emit, provider: activeProvider, thinkingMode, agentMode });
       } catch (err) {
         const msg = err?.message || 'Unknown error';
         try { emit({ type: 'done', message: `Agent stopped: ${msg}` }); } catch {}
@@ -354,7 +375,11 @@ export async function chatRoute(req) {
 
 // ── Agent Loop ────────────────────────────────────────────────────────────────
 
-async function agentLoop({ history, context, temperature, max_tokens, send, emit, provider, thinkingMode = false }) {
+async function agentLoop({ history, context, temperature, max_tokens, send, emit, provider, thinkingMode = false, agentMode = 'build' }) {
+  // Tools blocked per mode
+  const PLAN_BLOCKED  = new Set(['writeFile', 'patchFile', 'runTerminal', 'rememberFact', 'forgetFact', 'spawnAgent']);
+  const CHAT_BLOCKED  = new Set(['writeFile', 'patchFile', 'runTerminal', 'readFile', 'listFiles', 'searchCode', 'spawnAgent', 'rememberFact', 'forgetFact']);
+
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     // Bump round counter on the frontend
     send('thinking', { thinking: { type: '_round', round } });
@@ -402,6 +427,21 @@ async function agentLoop({ history, context, temperature, max_tokens, send, emit
 
     // Emit a contextual planning message before execution
     emit(buildPreToolEmit(toolCall));
+
+    // ── Guard: enforce agent mode tool restrictions ───────────────────────────
+    const blockedTools = agentMode === 'plan' ? PLAN_BLOCKED : agentMode === 'chat' ? CHAT_BLOCKED : null;
+    if (blockedTools && blockedTools.has(toolCall.tool)) {
+      const modeLabel = agentMode === 'plan' ? 'Plan' : 'Chat';
+      emit({ type: 'analyzing', message: `${modeLabel} mode — ${toolCall.tool} is not allowed. Describing instead.` });
+      history.push(
+        { role: 'assistant', content: JSON.stringify(toolCall) },
+        { role: 'user', content: agentMode === 'plan'
+          ? `[MODE RESTRICTION] You are in PLAN MODE. You cannot call "${toolCall.tool}". Instead, describe exactly what this tool call would do, what file/command it would affect, and what the expected result would be. Format it as a plan step.`
+          : `[MODE RESTRICTION] You are in CHAT MODE. You cannot call "${toolCall.tool}". Just answer conversationally without using file system or terminal tools.`
+        },
+      );
+      continue;
+    }
 
     // ── Guard: block playVideo when request is clearly a creation/coding task ──
     // The model sometimes confuses "video editor" (job title) with "play video".

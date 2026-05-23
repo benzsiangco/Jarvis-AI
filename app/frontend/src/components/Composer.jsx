@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Square, Paperclip, Loader2, ChevronDown, Shield, ShieldCheck, ShieldOff, GitCompare, FileDiff, XSquare, CheckSquare, ShieldAlert, Cpu, Brain } from 'lucide-react';
+import { Send, Square, Paperclip, Loader2, ChevronDown, Shield, ShieldCheck, ShieldOff, GitCompare, FileDiff, XSquare, CheckSquare, ShieldAlert, Cpu, Brain, Hammer, Map, MessageSquare } from 'lucide-react';
 import useChatStore from '../stores/chatStore';
 import useModelStore from '../stores/modelStore';
 import useEditorStore from '../stores/editorStore';
@@ -23,6 +23,8 @@ export default function Composer({ backendUrl }) {
   const pendingApproval = useChatStore((s) => s.pendingApproval);
   const thinkingMode = useChatStore((s) => s.thinkingMode);
   const setThinkingMode = useChatStore((s) => s.setThinkingMode);
+  const agentMode = useChatStore((s) => s.agentMode);
+  const setAgentMode = useChatStore((s) => s.setAgentMode);
   const serverStatus = useModelStore((s) => s.serverStatus);
   const activeModel = useModelStore((s) => s.activeModel);
   const appliedSettings = useModelStore((s) => s.appliedSettings);
@@ -264,6 +266,7 @@ export default function Composer({ backendUrl }) {
                 <span>Add context</span>
               </button>
               <PermissionSelect />
+              <AgentModeSelect mode={agentMode} onChange={setAgentMode} />
               <ThinkToggle on={thinkingMode} onToggle={() => setThinkingMode(!thinkingMode)} />
             </div>
             <div className="composer-controls-right">
@@ -464,6 +467,92 @@ function computeQuickStats(original, modified) {
     if (a[i] !== b[i]) { add++; del++; }
   }
   return { add, del };
+}
+
+/* ── Agent Mode Selector ── */
+const AGENT_MODES = [
+  {
+    value: 'chat',
+    icon: MessageSquare,
+    label: 'Chat',
+    desc: 'Conversational — no file writes or commands',
+    color: '#94a3b8',
+    activeColor: '#94a3b8',
+    activeBg: 'rgba(148,163,184,0.12)',
+    activeBorder: 'rgba(148,163,184,0.25)',
+  },
+  {
+    value: 'plan',
+    icon: Map,
+    label: 'Plan',
+    desc: 'Analyze and propose — reads files, no writes',
+    color: '#fbbf24',
+    activeColor: '#fbbf24',
+    activeBg: 'rgba(251,191,36,0.12)',
+    activeBorder: 'rgba(251,191,36,0.3)',
+  },
+  {
+    value: 'build',
+    icon: Hammer,
+    label: 'Build',
+    desc: 'Full execution — writes files, runs commands',
+    color: '#22d3ee',
+    activeColor: '#22d3ee',
+    activeBg: 'rgba(34,211,238,0.12)',
+    activeBorder: 'rgba(34,211,238,0.3)',
+  },
+];
+
+function AgentModeSelect({ mode, onChange }) {
+  const { triggerRef, open, toggle, close, pos } = useDropdownPortal();
+  const current = AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[2];
+  const Icon = current.icon;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={toggle}
+        className={`composer-btn ${open ? 'composer-btn-active' : ''}`}
+        title={`Mode: ${current.label} — ${current.desc}`}
+        style={open || true ? {
+          color: current.activeColor,
+          borderColor: open ? current.activeBorder : 'transparent',
+          background: open ? current.activeBg : 'transparent',
+        } : {}}
+      >
+        <Icon size={12} style={{ color: current.activeColor }} />
+        <span style={{ color: current.activeColor }}>{current.label}</span>
+        <ChevronDown size={11} style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 150ms' }} />
+      </button>
+
+      <DropdownPortal open={open} pos={pos} minW={240} maxW={280} align="left">
+        <div className="dd-menu">
+          <div className="dd-header">Agent Mode</div>
+          {AGENT_MODES.map((opt) => {
+            const OptionIcon = opt.icon;
+            const active = mode === opt.value;
+            return (
+              <button
+                key={opt.value}
+                className={`dd-row ${active ? 'dd-row-active' : ''}`}
+                onClick={() => { onChange(opt.value); close(); }}
+                style={active ? { background: opt.activeBg, borderLeft: `2px solid ${opt.activeColor}` } : {}}
+              >
+                <OptionIcon size={13} className="dd-row-icon" style={{ color: active ? opt.activeColor : undefined }} />
+                <div className="dd-row-body">
+                  <span className="dd-row-label" style={{ color: active ? opt.activeColor : undefined }}>{opt.label}</span>
+                  <span className="dd-row-desc">{opt.desc}</span>
+                </div>
+                {active && <span className="dd-check" style={{ color: opt.activeColor }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      </DropdownPortal>
+    </>
+  );
 }
 
 /* ── Think Toggle — LM Studio style ── */

@@ -23,6 +23,14 @@ const useChatStore = create((set, get) => ({
 
   thinkingMode: (() => { try { return localStorage.getItem('jarvis:thinkingMode') === 'true'; } catch { return false; } })(),
 
+  // 'chat' | 'plan' | 'build'
+  agentMode: (() => { try { return localStorage.getItem('jarvis:agentMode') || 'build'; } catch { return 'build'; } })(),
+
+  setAgentMode: (val) => {
+    localStorage.setItem('jarvis:agentMode', val);
+    set({ agentMode: val });
+  },
+
   addMessage: (message) =>
     set((state) => ({
       messages: [...state.messages, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, timestamp: Date.now(), ...message }],
@@ -215,7 +223,7 @@ const useChatStore = create((set, get) => ({
       const res = await fetch(`${backendUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history, workspacePath, permissionMode, supportsImages, thinkingMode: get().thinkingMode }),
+        body: JSON.stringify({ messages: history, workspacePath, permissionMode, supportsImages, thinkingMode: get().thinkingMode, agentMode: get().agentMode }),
         signal: controller.signal,
       });
 
