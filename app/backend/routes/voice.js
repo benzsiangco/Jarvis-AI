@@ -124,6 +124,14 @@ export async function voiceRoute(req, url) {
     if (setupState === 'installing') {
       return Response.json({ ok: false, error: 'Already installing' }, { status: 409 });
     }
+
+    // Optional: specific packages to install (array of names)
+    let selectedPackages = [];
+    try {
+      const body = await req.json().catch(() => ({}));
+      selectedPackages = Array.isArray(body.packages) ? body.packages : [];
+    } catch {}
+
     setupState = 'installing';
     broadcastSetup({ event: 'state', status: 'installing' });
 
@@ -148,16 +156,20 @@ export async function voiceRoute(req, url) {
     let proc = null;
     let usedPy = null;
 
+    const spawnArgs = [launchPy, ...selectedPackages];
+
     for (const py of pythonCmds) {
       try {
-        // Use Bun.spawn — more reliable than child_process in Bun runtime
-        proc = Bun.spawn([py, launchPy], {
+        proc = Bun.spawn([py, ...spawnArgs], {
           env: {
             ...process.env,
             JARVIS_VOICE_PORT: '6970',
             JARVIS_WHISPER_MODEL: 'base.en',
             JARVIS_WHISPER_DEVICE: 'cpu',
             JARVIS_WHISPER_COMPUTE: 'int8',
+            // Force pip to use UTF-8 output
+            PYTHONIOENCODING: 'utf-8',
+            PYTHONUNBUFFERED: '1',
           },
           stdout: 'pipe',
           stderr: 'pipe',
@@ -201,19 +213,13 @@ export async function voiceRoute(req, url) {
                 broadcastSetup({ event: 'state', status: 'error' });
               }
             } catch {
-              // Non-JSON line — send as log
-              broadcastSetup({ event: 'log', message: trimmed });
+              broadcastSetup({ event: 'log', message: trimmed.slice(0, 200) });
             }
           }
         }
-        // Flush remaining buffer
         if (buf.trim()) {
-          try {
-            const evt = JSON.parse(buf.trim());
-            broadcastSetup(evt);
-          } catch {
-            broadcastSetup({ event: 'log', message: buf.trim() });
-          }
+          try { broadcastSetup(JSON.parse(buf.trim())); }
+          catch { broadcastSetup({ event: 'log', message: buf.trim().slice(0, 200) }); }
         }
       } catch (e) {
         broadcastSetup({ event: 'log', message: `stdout error: ${e.message}` });
@@ -225,7 +231,7 @@ export async function voiceRoute(req, url) {
       try {
         for await (const chunk of proc.stderr) {
           const msg = new TextDecoder().decode(chunk).trim();
-          if (msg) broadcastSetup({ event: 'log', message: msg });
+          if (msg) broadcastSetup({ event: 'log', message: msg.slice(0, 200) });
         }
       } catch {}
     })();

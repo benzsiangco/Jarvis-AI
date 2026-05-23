@@ -1,33 +1,40 @@
 /**
  * useVoiceSetup — tracks voice dependency installation via SSE.
- *
- * status: 'idle' | 'checking' | 'installing' | 'done' | 'error'
- * packages: [{ name, label, size, status: 'pending'|'installing'|'done'|'error', error? }]
+ * Supports per-package progress: speed, ETA, bytes downloaded.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const PACKAGES_META = [
-  { name: 'faster-whisper',    label: 'faster-whisper (STT engine)', size: '~50MB' },
-  { name: 'fastapi',           label: 'FastAPI (web server)',         size: '~5MB'  },
-  { name: 'uvicorn[standard]', label: 'Uvicorn (ASGI server)',        size: '~3MB'  },
-  { name: 'python-multipart',  label: 'python-multipart (upload)',    size: '~1MB'  },
-  { name: 'edge-tts',          label: 'edge-tts (TTS engine)',        size: '~2MB'  },
+export const PACKAGES_META = [
+  { name: 'faster-whisper',    label: 'faster-whisper (STT engine)', size: '~50 MB', size_mb: 50 },
+  { name: 'fastapi',           label: 'FastAPI (web server)',         size: '~5 MB',  size_mb: 5  },
+  { name: 'uvicorn[standard]', label: 'Uvicorn (ASGI server)',        size: '~3 MB',  size_mb: 3  },
+  { name: 'python-multipart',  label: 'python-multipart (upload)',    size: '~1 MB',  size_mb: 1  },
+  { name: 'edge-tts',          label: 'edge-tts (TTS engine)',        size: '~2 MB',  size_mb: 2  },
 ];
 
-function makePackages() {
-  return PACKAGES_META.map((p) => ({ ...p, status: 'pending', error: null }));
+function makePackages(selected = null) {
+  return PACKAGES_META.map((p) => ({
+    ...p,
+    selected: selected ? selected.includes(p.name) : true,
+    status: 'pending',   // pending | installing | done | error | skipped
+    error: null,
+    downloaded: 0,
+    total: p.size_mb * 1024 * 1024,
+    percent: 0,
+    speed: 0,            // bytes/s
+    eta: 0,              // seconds
+    elapsed: 0,
+  }));
 }
 
 export default function useVoiceSetup(backendUrl) {
-  const [status, setStatus]   = useState('idle');
+  const [status, setStatus]     = useState('idle');
   const [packages, setPackages] = useState(makePackages());
-  const [log, setLog]         = useState([]);
+  const [log, setLog]           = useState([]);
   const esRef = useRef(null);
 
   const updatePkg = useCallback((name, patch) => {
-    setPackages((prev) =>
-      prev.map((p) => (p.name === name ? { ...p, ...patch } : p))
-    );
+    setPackages((prev) => prev.map((p) => p.name === name ? { ...p, ...patch } : p));
   }, []);
 
   const connect = useCallback(() => {
@@ -45,43 +52,50 @@ export default function useVoiceSetup(backendUrl) {
           break;
         case 'start':
           setStatus('installing');
-          setPackages(makePackages());
           break;
         case 'needs_install':
-          // Mark only the ones that need installing as pending, rest as done
-          setPackages((prev) =>
-            prev.map((p) => ({
-              ...p,
-              status: evt.packages.includes(p.name) ? 'pending' : 'done',
-            }))
-          );
+          setPackages((prev) => prev.map((p) => ({
+            ...p,
+            status: evt.packages.includes(p.name) ? 'pending' : 'done',
+          })));
           break;
         case 'all_installed':
           setPackages((prev) => prev.map((p) => ({ ...p, status: 'done' })));
           break;
         case 'installing':
-          updatePkg(evt.name, { status: 'installing' });
+          updatePkg(evt.name, { status: 'installing', percent: 0, speed: 0, eta: 0 });
+          break;
+        case 'progress':
+          updatePkg(evt.name, {
+            status: 'installing',
+            downloaded: evt.downloaded || 0,
+            total: evt.total || 0,
+            percent: evt.percent || 0,
+            speed: evt.speed || 0,
+            eta: evt.eta || 0,
+          });
           break;
         case 'installed':
-          updatePkg(evt.name, { status: 'done' });
+          updatePkg(evt.name, { status: 'done', percent: 100, speed: 0, eta: 0, elapsed: evt.elapsed || 0 });
           break;
         case 'error':
-          updatePkg(evt.name, { status: 'error', error: evt.message });
+          if (evt.name) updatePkg(evt.name, { status: 'error', error: evt.message });
           setStatus('error');
+          setLog((l) => [...l.slice(-29), `✗ ${evt.name || 'error'}: ${evt.message}`]);
           break;
         case 'failed':
           setStatus('error');
-          setLog((l) => [...l, `Failed: ${evt.message}`]);
+          setLog((l) => [...l.slice(-29), `✗ Failed: ${evt.message}`]);
           break;
         case 'launching':
-          setLog((l) => [...l, 'Starting voice sidecar…']);
+          setLog((l) => [...l.slice(-29), '→ Starting voice sidecar…']);
           break;
         case 'ready':
           setStatus('done');
-          setPackages((prev) => prev.map((p) => ({ ...p, status: 'done' })));
+          setPackages((prev) => prev.map((p) => ({ ...p, status: p.status === 'pending' ? 'skipped' : p.status === 'installing' ? 'done' : p.status })));
           break;
         case 'log':
-          setLog((l) => [...l.slice(-19), evt.message]);
+          setLog((l) => [...l.slice(-29), evt.message]);
           break;
         default:
           break;
@@ -89,10 +103,7 @@ export default function useVoiceSetup(backendUrl) {
     };
 
     es.onerror = () => {
-      // SSE disconnected — reconnect after 3s if still installing
-      setTimeout(() => {
-        if (esRef.current === es) connect();
-      }, 3000);
+      setTimeout(() => { if (esRef.current === es) connect(); }, 3000);
     };
   }, [backendUrl, updatePkg]);
 
@@ -101,14 +112,18 @@ export default function useVoiceSetup(backendUrl) {
     return () => { esRef.current?.close(); esRef.current = null; };
   }, [connect]);
 
-  const startInstall = useCallback(async () => {
-    // Reset server state first so we don't get 409 on retry
+  const startInstall = useCallback(async (selectedNames = null) => {
     try { await fetch(`${backendUrl}/api/voice/setup/reset`, { method: 'POST' }); } catch {}
     setStatus('installing');
-    setPackages(makePackages());
+    setPackages(makePackages(selectedNames));
     setLog([]);
     try {
-      const res = await fetch(`${backendUrl}/api/voice/setup/start`, { method: 'POST' });
+      const body = selectedNames ? { packages: selectedNames } : {};
+      const res = await fetch(`${backendUrl}/api/voice/setup/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setStatus('error');
@@ -129,5 +144,9 @@ export default function useVoiceSetup(backendUrl) {
     setLog([]);
   }, [backendUrl]);
 
-  return { status, packages, log, startInstall, retry };
+  const toggleSelect = useCallback((name) => {
+    setPackages((prev) => prev.map((p) => p.name === name ? { ...p, selected: !p.selected } : p));
+  }, []);
+
+  return { status, packages, log, startInstall, retry, toggleSelect };
 }
