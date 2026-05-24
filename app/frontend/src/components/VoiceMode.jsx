@@ -38,7 +38,6 @@ export default function VoiceMode({ backendUrl }) {
   const amplitude    = useModeStore((s) => s.amplitude);
   const setReactor   = useModeStore((s) => s.setReactorState);
   const muted        = useModeStore((s) => s.muted);
-  const ttsEnabled   = useModeStore((s) => s.ttsEnabled ?? true);
   const setAmplitude = useModeStore((s) => s.setAmplitude);
 
   const messages       = useChatStore((s) => s.messages);
@@ -130,13 +129,13 @@ export default function VoiceMode({ backendUrl }) {
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
   const currentResponse = typeof lastAssistant?.content === 'string' ? lastAssistant.content : '';
 
-  // TTS — speaks completed responses
+  // TTS — speaks completed responses via Supertonic
   const tts = useTTSSpeak({
     backendUrl,
     enabled: jarvisActive,
     text: currentResponse,
     isStreaming,
-    muted: !ttsEnabled,
+    muted: false,
     outputDeviceId: useAudioDevicesStore((s) => s.outputDeviceId),
   });
 

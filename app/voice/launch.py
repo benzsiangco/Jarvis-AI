@@ -1,6 +1,9 @@
 """
-Jarvis Voice Launcher — installs dependencies with rich progress output.
+Jarvis Voice Launcher — installs STT + TTS dependencies and starts sidecars.
 Emits structured JSON lines for the UI to consume (speed, ETA, bytes).
+
+STT: faster-whisper (Whisper) on port 6970
+TTS: supertonic serve on port 7788
 """
 import subprocess
 import sys
@@ -8,13 +11,14 @@ import os
 import json
 import time
 import re
+import threading
 
 PACKAGES = [
-    {"name": "faster-whisper", "import": "faster_whisper", "label": "faster-whisper (STT engine)", "size_mb": 50},
-    {"name": "fastapi",        "import": "fastapi",         "label": "FastAPI (web server)",        "size_mb": 5},
-    {"name": "uvicorn[standard]", "import": "uvicorn",      "label": "Uvicorn (ASGI server)",       "size_mb": 3},
-    {"name": "python-multipart",  "import": "multipart",    "label": "python-multipart (upload)",   "size_mb": 1},
-    {"name": "edge-tts",       "import": "edge_tts",         "label": "edge-tts (TTS engine)",      "size_mb": 2},
+    {"name": "faster-whisper",    "import": "faster_whisper", "label": "faster-whisper (STT engine)", "size_mb": 50},
+    {"name": "fastapi",           "import": "fastapi",         "label": "FastAPI (web server)",        "size_mb": 5},
+    {"name": "uvicorn[standard]", "import": "uvicorn",         "label": "Uvicorn (ASGI server)",       "size_mb": 3},
+    {"name": "python-multipart",  "import": "multipart",       "label": "python-multipart (upload)",   "size_mb": 1},
+    {"name": "supertonic[serve]", "import": "supertonic",      "label": "Supertonic TTS (on-device)",  "size_mb": 120},
 ]
 
 def emit(event, **data):
@@ -40,29 +44,21 @@ def install_package(pkg):
             text=True,
             bufsize=1,
         )
-        downloaded = 0
-        total = pkg["size_mb"] * 1024 * 1024  # estimate
-        last_speed_time = start
-        last_bytes = 0
+        total = pkg["size_mb"] * 1024 * 1024
 
         for line in proc.stdout:
             line = line.rstrip()
             if not line:
                 continue
 
-            # pip download progress: "Downloading package-1.0.tar.gz (5.2 MB)"
             size_match = re.search(r'Downloading .+\(([0-9.]+)\s*(MB|kB|KB|B)\)', line)
             if size_match:
                 val = float(size_match.group(1))
                 unit = size_match.group(2).upper()
-                if unit == 'MB':
-                    total = int(val * 1024 * 1024)
-                elif unit in ('KB', 'KB'):
-                    total = int(val * 1024)
-                else:
-                    total = int(val)
+                if unit == 'MB':   total = int(val * 1024 * 1024)
+                elif unit in ('KB','KB'): total = int(val * 1024)
+                else: total = int(val)
 
-            # pip progress bar: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.2/5.2 MB 2.1 MB/s eta 0:00:00"
             progress_match = re.search(
                 r'([0-9.]+)/([0-9.]+)\s*(MB|kB|KB|B)\s+([0-9.]+)\s*(MB|kB|KB|B)/s(?:\s+eta\s+(\S+))?',
                 line
@@ -71,41 +67,28 @@ def install_package(pkg):
                 def to_bytes(val, unit):
                     u = unit.upper()
                     if u == 'MB': return int(float(val) * 1024 * 1024)
-                    if u in ('KB', 'KB'): return int(float(val) * 1024)
+                    if u in ('KB','KB'): return int(float(val) * 1024)
                     return int(float(val))
 
                 downloaded = to_bytes(progress_match.group(1), progress_match.group(3))
                 total_now  = to_bytes(progress_match.group(2), progress_match.group(3))
-                if total_now > 0:
-                    total = total_now
+                if total_now > 0: total = total_now
                 speed_bytes = to_bytes(progress_match.group(4), progress_match.group(5))
                 eta_str = progress_match.group(6) or ''
-
-                # Parse ETA string like "0:00:30" → seconds
                 eta_secs = 0
                 eta_parts = eta_str.split(':')
                 if len(eta_parts) == 3:
-                    try:
-                        eta_secs = int(eta_parts[0])*3600 + int(eta_parts[1])*60 + int(eta_parts[2])
-                    except:
-                        pass
+                    try: eta_secs = int(eta_parts[0])*3600 + int(eta_parts[1])*60 + int(eta_parts[2])
+                    except: pass
                 elif len(eta_parts) == 2:
-                    try:
-                        eta_secs = int(eta_parts[0])*60 + int(eta_parts[1])
-                    except:
-                        pass
+                    try: eta_secs = int(eta_parts[0])*60 + int(eta_parts[1])
+                    except: pass
 
                 pct = int(downloaded / total * 100) if total > 0 else 0
-                emit("progress",
-                     name=name,
-                     downloaded=downloaded,
-                     total=total,
-                     percent=pct,
-                     speed=speed_bytes,
-                     eta=eta_secs)
+                emit("progress", name=name, downloaded=downloaded, total=total,
+                     percent=pct, speed=speed_bytes, eta=eta_secs)
                 continue
 
-            # Emit non-progress lines as log
             if line and not line.startswith(' ') and 'WARNING' not in line:
                 emit("log", message=line[:120])
 
@@ -116,8 +99,7 @@ def install_package(pkg):
             emit("error", name=name, message=f"pip exited with code {proc.returncode}")
             return False
 
-        emit("installed", name=name, label=pkg["label"],
-             elapsed=round(elapsed, 1))
+        emit("installed", name=name, label=pkg["label"], elapsed=round(elapsed, 1))
         return True
 
     except Exception as e:
@@ -125,10 +107,7 @@ def install_package(pkg):
         return False
 
 def main():
-    # Parse which packages to install from args (space-separated names)
-    # If no args, install all that are missing
     requested = set(sys.argv[1:]) if len(sys.argv) > 1 else None
-
     to_check = [p for p in PACKAGES if requested is None or p["name"] in requested]
     to_install = [p for p in to_check if not is_installed(p["import"])]
 
@@ -147,15 +126,46 @@ def main():
                      message=f"Failed to install {pkg['name']}")
                 sys.exit(1)
 
-    emit("launching", message="Starting voice sidecar...")
+    # ── Launch STT sidecar ──────────────────────────────────────────────
+    emit("launching", message="Starting STT sidecar (Whisper)...")
     sidecar = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sidecar.py")
-    if not os.path.exists(sidecar):
-        emit("error", name="sidecar",
-             message=f"sidecar.py not found at {sidecar}")
-        sys.exit(1)
+    if os.path.exists(sidecar):
+        stt_proc = subprocess.Popen(
+            [sys.executable, sidecar],
+            env={**os.environ,
+                 "JARVIS_VOICE_PORT": os.environ.get("JARVIS_VOICE_PORT", "6970"),
+                 "JARVIS_WHISPER_MODEL": os.environ.get("JARVIS_WHISPER_MODEL", "base.en"),
+                 "JARVIS_WHISPER_DEVICE": os.environ.get("JARVIS_WHISPER_DEVICE", "cpu"),
+                 "JARVIS_WHISPER_COMPUTE": os.environ.get("JARVIS_WHISPER_COMPUTE", "int8")},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        emit("log", message=f"STT sidecar started (pid {stt_proc.pid})")
+    else:
+        emit("log", message="sidecar.py not found — STT disabled")
 
-    emit("ready", message="Voice sidecar ready")
-    os.execv(sys.executable, [sys.executable, sidecar] + [])
+    # ── Launch Supertonic TTS server ────────────────────────────────────
+    emit("launching", message="Starting Supertonic TTS server...")
+    tts_port = os.environ.get("JARVIS_TTS_PORT", "7788")
+    try:
+        tts_proc = subprocess.Popen(
+            [sys.executable, "-m", "supertonic", "serve",
+             "--host", "127.0.0.1", "--port", tts_port],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        emit("log", message=f"Supertonic TTS started on port {tts_port} (pid {tts_proc.pid})")
+    except Exception as e:
+        emit("log", message=f"Supertonic TTS failed to start: {e}")
+
+    emit("ready", message="Voice services ready")
+
+    # Keep process alive so both sidecars stay running
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        pass
 
 if __name__ == "__main__":
     main()

@@ -32,7 +32,6 @@ const useModeStore = create((set) => ({
   amplitude:    0,
   micEnabled:   false,
   muted:        false,   // mic mute (pauses listening)
-  ttsEnabled:   true,    // TTS output enabled (separate from mic mute)
 
   setMode: (mode) => {
     if (mode !== 'chat' && mode !== 'voice') return;
@@ -50,10 +49,8 @@ const useModeStore = create((set) => ({
 
   setMicEnabled: (v) => set({ micEnabled: !!v }),
   setMuted:      (v) => set({ muted:      !!v }),
-  setTtsEnabled: (v) => set({ ttsEnabled: !!v }),
 
   toggleMute:    () => set((s) => ({ muted:      !s.muted })),
-  toggleTts:     () => set((s) => ({ ttsEnabled: !s.ttsEnabled })),
   toggleMic:     () => set((s) => ({ micEnabled: !s.micEnabled })),
 }));
 

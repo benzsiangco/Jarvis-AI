@@ -1,18 +1,15 @@
 /**
  * VoiceControls — minimal floating control dock for Voice Mode.
- * TTS toggle · Mic mute · Fullscreen · Settings
- * + inline mic level meter with state label underneath.
+ * Mic mute · Subtitles · Fullscreen · Settings
  */
 import { useState, useEffect } from 'react';
-import { Mic, MicOff, Volume2, VolumeX, Settings, Maximize2, Minimize2, Captions, CaptionsOff } from 'lucide-react';
+import { Mic, MicOff, Settings, Maximize2, Minimize2, Captions, CaptionsOff } from 'lucide-react';
 import useModeStore from '../stores/modeStore';
 import SettingsModal from './SettingsModal';
 
 export default function VoiceControls({ backendUrl, amplitude = 0, showMeter = false, statusLabel = '', subtitlesOn = true, onToggleSubtitles }) {
-  const muted       = useModeStore((s) => s.muted);
-  const ttsEnabled  = useModeStore((s) => s.ttsEnabled ?? true);
-  const toggleMute  = useModeStore((s) => s.toggleMute);
-  const toggleTts   = useModeStore((s) => s.toggleTts);
+  const muted      = useModeStore((s) => s.muted);
+  const toggleMute = useModeStore((s) => s.toggleMute);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -44,15 +41,6 @@ export default function VoiceControls({ backendUrl, amplitude = 0, showMeter = f
     <>
       <div className="vm-controls-wrap">
         <div className="vm-controls">
-          {/* TTS output toggle */}
-          <ControlBtn
-            label={ttsEnabled ? 'Mute voice output' : 'Unmute voice output'}
-            active={ttsEnabled}
-            primary={ttsEnabled}
-            onClick={toggleTts}
-            icon={ttsEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-          />
-
           {/* Mic mute toggle */}
           <ControlBtn
             label={muted ? 'Unmute mic' : 'Mute mic'}
