@@ -275,6 +275,7 @@ async function transcribeLocal(req) {
 
 // Track if we've already tried to auto-start Supertonic
 let supertonicStarted = false;
+let supertonicProc = null;
 
 async function ensureSupertonic() {
   // Already reachable
@@ -283,26 +284,46 @@ async function ensureSupertonic() {
     if (r.ok) return true;
   } catch {}
 
-  if (supertonicStarted) return false; // already tried, don't spam
+  if (supertonicStarted) {
+    // Already tried — wait a bit longer in case it's still starting
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const r = await fetch(`${SUPERTONIC_URL}/health`, { signal: AbortSignal.timeout(2000) });
+      if (r.ok) return true;
+    } catch {}
+    return false;
+  }
   supertonicStarted = true;
 
-  // Try to start supertonic serve
+  // Try multiple ways to start supertonic serve
   const pythonCmds = ['python', 'python3', 'py'];
+  const port = '7788';
+
   for (const py of pythonCmds) {
+    // Try: python -m supertonic serve
     try {
-      Bun.spawn([py, '-m', 'supertonic', 'serve', '--host', '127.0.0.1', '--port', '7788'], {
-        stdout: 'ignore',
-        stderr: 'ignore',
-        stdin: null,
-        windowsHide: true,
+      supertonicProc = Bun.spawn([py, '-m', 'supertonic', 'serve', '--host', '127.0.0.1', '--port', port], {
+        stdout: 'ignore', stderr: 'ignore', stdin: null, windowsHide: true,
       });
-      // Give it 3s to start
-      await new Promise((r) => setTimeout(r, 3000));
+      await new Promise((r) => setTimeout(r, 4000));
       const check = await fetch(`${SUPERTONIC_URL}/health`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
       if (check?.ok) return true;
-      break;
     } catch {}
+
+    // Try: supertonic serve (if installed as a script)
+    try {
+      supertonicProc = Bun.spawn(['supertonic', 'serve', '--host', '127.0.0.1', '--port', port], {
+        stdout: 'ignore', stderr: 'ignore', stdin: null, windowsHide: true,
+      });
+      await new Promise((r) => setTimeout(r, 4000));
+      const check = await fetch(`${SUPERTONIC_URL}/health`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
+      if (check?.ok) return true;
+    } catch {}
+
+    break; // only try first working python
   }
+
+  supertonicStarted = false; // allow retry
   return false;
 }
 
@@ -322,7 +343,7 @@ async function speakSupertonic(req) {
   const ready = await ensureSupertonic();
   if (!ready) {
     return Response.json({
-      error: 'Supertonic TTS is not running. Go to Settings → Voice Setup and install voice dependencies first.',
+      error: 'Supertonic TTS is not ready. If not installed: go to Settings → Voice Setup and install dependencies. If installed: it may still be starting up — try again in a few seconds.',
     }, { status: 503 });
   }
 
