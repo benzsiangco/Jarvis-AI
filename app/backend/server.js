@@ -175,3 +175,6 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (err) => {
   console.error('[JARVIS] Uncaught exception (non-fatal):', err?.message || err);
 });
+
+// Keepalive — prevents Bun from exiting if all async work completes
+setInterval(() => {}, 60000);

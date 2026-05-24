@@ -112,7 +112,13 @@ todoList     → args: { action: "list"|"add"|"complete"|"delete"|"clear", text?
     - "curl https://api.example.com" → runTerminal with curl command
     - "fetch this URL" → webFetch tool
 14. For commands, file paths, API keys, URLs, IDs, or any single copyable value — wrap it in [BOX:value] so the user gets a copy button.
-15. VIBE CODING: When asked to build/create/scaffold a project, immediately start writing files. Don't ask for confirmation. Create a complete, working implementation.`;
+15. VIBE CODING: When asked to build/create/scaffold a project, immediately start writing files. Don't ask for confirmation. Create a complete, working implementation.
+16. SEARCH FIRST — if the user asks about anything you are not 100% certain about (current events, prices, versions, people, places, news, facts, how-to, definitions, recommendations), call searchInternet BEFORE answering. Do NOT answer from memory alone.
+    - "who is [person]" → searchInternet first
+    - "what is the latest [software] version" → searchInternet first
+    - "how do I [task]" → searchInternet first
+    - "what is [concept]" → searchInternet first
+    - any question about current events or recent info → searchInternet first`;
 
 export async function chatApproveRoute(req) {
   if (req.method !== 'POST') {
@@ -243,7 +249,26 @@ Do NOT use any file system or terminal tools. Just talk.`
       .trim() || lastContent.trim();
     history[history.length - 1] = {
       ...history[history.length - 1],
-      content: `${lastContent}\n[SYSTEM: Use playVideo tool now. Call: {"tool":"playVideo","args":{"query":"${query.replace(/"/g, '')}"}}]`,
+      content: lastContent + '\n[SYSTEM: Use playVideo tool now. Call: {"tool":"playVideo","args":{"query":"' + query.replace(/"/g, '') + '"}}]',
+    };
+  }
+
+  // ── Auto-inject searchInternet for knowledge/factual questions ──────────────
+  // Small models answer from training data. Force a search for factual questions.
+  const isKnowledgeQuestion = (
+    /^(who|what|when|where|why|how|which|is|are|was|were|does|did|can|will|has|have)\b/i.test(lastContent.trim()) ||
+    /\b(search|look up|find out|tell me about|explain|define|meaning of|latest|current|recent|news|price|cost|version|release|update|review|best|top|compare)\b/i.test(lastContent)
+  ) && (
+    !/\b(create|make|build|write|code|generate|scaffold|init|run|execute|install|npm|pip|git|file|folder|directory)\b/i.test(lastContent)
+  ) && (
+    !lastContent.includes('"tool"')
+  );
+
+  if (isKnowledgeQuestion && agentMode !== 'chat') {
+    const q = lastContent.replace(/"/g, '').slice(0, 150);
+    history[history.length - 1] = {
+      ...history[history.length - 1],
+      content: lastContent + '\n[SYSTEM: Knowledge question detected. You MUST call searchInternet FIRST before answering. Call: {"tool":"searchInternet","args":{"query":"' + q + '"}}]',
     };
   }
 
@@ -1414,7 +1439,8 @@ CRITICAL RULES:
 5. create file → writeFile with full content immediately. Do NOT ask first.
 6. After tool result, answer in ONE line. No thinking out loud.
 7. askQuestion options must be real choices, not placeholder letters.
-8. playVideo → ONLY for explicit "play [song]", "watch [video]", "rickroll me". NEVER for create/build/make/code/website/portfolio tasks. "video editor" = job title, not a video to play.`;
+8. playVideo → ONLY for explicit "play [song]", "watch [video]", "rickroll me". NEVER for create/build/make/code/website/portfolio tasks. "video editor" = job title, not a video to play.
+9. SEARCH FIRST — if the user asks about anything you are not 100% certain about (current events, prices, versions, people, places, news, facts, how-to, definitions, recommendations), call searchInternet BEFORE answering. Do NOT answer from memory alone. Examples: "who is X" / "latest version of Y" / "how do I Z" / "what is W" → always searchInternet first.`;
 
   return prompt + ctx + toolsSection;
 }
