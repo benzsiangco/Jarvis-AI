@@ -259,27 +259,35 @@ Do NOT use any file system or terminal tools. Just talk.`
   }
 
   // ── Auto-inject searchInternet for knowledge/factual questions ──────────────
-  // Detect search intent and inject a FORCED tool call — don't rely on the model
-  // to decide. Small models consistently refuse to search.
-  const isSearchRequest = /^(search|google|look up|find|search for|search google|google for)\b/i.test(lastContent.trim());
+  // Only inject for EXTERNAL knowledge queries — not personal/conversational questions.
+  const isSearchRequest = /^(search|google|look up|find info|search for|search google|google for|find out about)\b/i.test(lastContent.trim());
 
-  const isKnowledgeQuestion = !isSearchRequest && (
-    /^(who|what|when|where|why|how|which)\b/i.test(lastContent.trim()) ||
-    /\b(who is|what is|when is|where is|how do|how does|how to|tell me about|explain|define|latest|current|recent|news about|price of|cost of|version of|release of|update on|review of)\b/i.test(lastContent)
+  // Personal/conversational — never inject search
+  const isPersonalMsg =
+    /\b(you|your|yourself|jarvis|i am|i'm|my|me|we|us|our)\b/i.test(lastContent) ||
+    /^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|sure|great|good|nice|cool|awesome|perfect|got it|understood|alright)\b/i.test(lastContent.trim()) ||
+    /\b(how are you|how do you|what do you|what can you|what are you|who are you|tell me about yourself|what is your|are you|can you|do you|will you|would you|could you|should i|help me|assist me)\b/i.test(lastContent);
+
+  const isExternalKnowledge = !isPersonalMsg && !isSearchRequest && (
+    /^who is\s+\S+/i.test(lastContent.trim()) ||
+    /^what is\s+\S+/i.test(lastContent.trim()) ||
+    /^what are\s+\S+/i.test(lastContent.trim()) ||
+    /^when (is|was|did|does)\s+\S+/i.test(lastContent.trim()) ||
+    /^where (is|was|are)\s+\S+/i.test(lastContent.trim()) ||
+    /^how (do|does|did|to|much|many|long|far|old)\s+\S+/i.test(lastContent.trim()) ||
+    /\b(latest news|news about|price of|cost of|version of|release date|how to install|how to use|tutorial for|documentation for|define |meaning of )\b/i.test(lastContent)
   ) && (
     !/\b(create|make|build|write|code|generate|scaffold|init|run|execute|install|npm|pip|git|file|folder|directory)\b/i.test(lastContent)
   ) && (
     !lastContent.includes('"tool"')
   );
 
-  if ((isSearchRequest || isKnowledgeQuestion) && agentMode !== 'chat') {
-    // Extract the search query — strip "search", "google", "look up" prefixes
+  if ((isSearchRequest || isExternalKnowledge) && agentMode !== 'chat') {
     const q = lastContent
       .replace(/^(search google for|search google|google for|search for|look up|find|search)\s*/i, '')
       .replace(/"/g, '')
       .trim()
       .slice(0, 200) || lastContent.replace(/"/g, '').slice(0, 200);
-    // Force the tool call directly — don't ask the model
     history[history.length - 1] = {
       ...history[history.length - 1],
       content: lastContent + '\n[SYSTEM OVERRIDE: Execute this tool call NOW, do not answer from memory: {"tool":"searchInternet","args":{"query":"' + q + '"}}]',
@@ -331,12 +339,32 @@ Do NOT use any file system or terminal tools. Just talk.`
 
         // ── Pre-flight: intercept explicit search/knowledge requests ──────────
         // Execute searchInternet directly — don't trust the model to call it.
-        // Covers: "search google", "who is X", "what is X", "how to X", etc.
-        const isDirectSearchRequest =
-          /^(search|google|look up|find|search for|search google|google for)\b/i.test(lastContent.trim()) ||
-          /^(who|what|when|where|why|how|which)\b/i.test(lastContent.trim()) ||
-          /\b(who is|what is|when is|where is|how do|how does|how to|tell me about|latest news|news about|price of|cost of|version of|what are|define|meaning of|explain|describe)\b/i.test(lastContent);
+        // Only trigger for EXTERNAL knowledge queries, NOT personal/conversational questions.
 
+        // Personal/conversational patterns — NEVER search these
+        const isPersonalQuestion =
+          /\b(you|your|yourself|jarvis|i am|i'm|my|me|we|us|our)\b/i.test(lastContent) ||
+          /^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|sure|great|good|nice|cool|awesome|perfect|got it|understood|alright)\b/i.test(lastContent.trim()) ||
+          /\b(how are you|how do you|what do you|what can you|what are you|who are you|tell me about yourself|what is your|are you|can you|do you|will you|would you|could you|should i|help me|assist me)\b/i.test(lastContent);
+
+        // Explicit search intent — ALWAYS search these
+        const isExplicitSearch =
+          /^(search|google|look up|find info|search for|search google|google for|find out about)\b/i.test(lastContent.trim());
+
+        // External knowledge query — search if about a real-world subject (not JARVIS/personal)
+        const isExternalKnowledge =
+          !isPersonalQuestion && (
+            // "who is [person name]" — must have a proper noun or specific subject after
+            /^who is\s+\S+/i.test(lastContent.trim()) ||
+            /^what is\s+\S+/i.test(lastContent.trim()) ||
+            /^what are\s+\S+/i.test(lastContent.trim()) ||
+            /^when (is|was|did|does)\s+\S+/i.test(lastContent.trim()) ||
+            /^where (is|was|are)\s+\S+/i.test(lastContent.trim()) ||
+            /^how (do|does|did|to|much|many|long|far|old)\s+\S+/i.test(lastContent.trim()) ||
+            /\b(latest news|news about|price of|cost of|version of|release date|how to install|how to use|tutorial for|documentation for|what does .+ mean|define |meaning of )\b/i.test(lastContent)
+          );
+
+        const isDirectSearchRequest = isExplicitSearch || isExternalKnowledge;
         const isNotCodingTask = !/\b(create|make|build|write|code|generate|scaffold|init|run|execute|install|npm|pip|git|mkdir|touch|open|start)\b/i.test(lastContent);
         const isNotToolCall = !lastContent.includes('"tool"');
         const isNotMediaRequest = !/\b(image|photo|picture|pic|play|watch|youtube|video|music)\b/i.test(lastContent);
