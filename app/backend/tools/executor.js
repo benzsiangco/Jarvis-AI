@@ -2,7 +2,7 @@
  * Tool Executor — validates + runs all agent tools safely.
  * The model ONLY requests actions. This layer executes them.
  */
-import { readFile, writeFile, mkdir, readdir, stat } from 'fs/promises';
+import { readFile, writeFile, mkdir, readdir, stat, unlink, rename } from 'fs/promises';
 import { join, basename, extname, dirname, isAbsolute } from 'path';
 import { spawn } from 'child_process';
 import { applyPatch } from './patchApply.js';
@@ -126,11 +126,16 @@ async function execAppendFile({ path, content }, ctx, emit) {
 
 async function execDeleteFile({ path }, ctx, emit) {
   const fullPath = resolvePath(path, ctx);
-  const { unlink, rmdir } = await import('fs/promises');
   const info = await stat(fullPath);
   if (info.isDirectory()) {
-    const { rm } = await import('fs/promises');
-    await rm(fullPath, { recursive: true, force: true });
+    // Use runTerminal to rmdir recursively — avoids dynamic import issues
+    const { rm } = await import('fs/promises').catch(() => ({}));
+    if (rm) {
+      await rm(fullPath, { recursive: true, force: true });
+    } else {
+      // Fallback for older Node/Bun
+      await rmRecursive(fullPath);
+    }
     return { deleted: true, path: fullPath, type: 'directory' };
   }
   await unlink(fullPath);
@@ -138,8 +143,18 @@ async function execDeleteFile({ path }, ctx, emit) {
   return { deleted: true, path: fullPath, type: 'file' };
 }
 
+async function rmRecursive(dir) {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) await rmRecursive(p);
+    else await unlink(p);
+  }
+  const { rmdir } = await import('fs/promises');
+  await rmdir(dir);
+}
+
 async function execMoveFile({ source, destination }, ctx) {
-  const { rename } = await import('fs/promises');
   const srcPath  = resolvePath(source, ctx);
   const destPath = resolvePath(destination, ctx);
   const destDir  = dirname(destPath);
@@ -149,7 +164,6 @@ async function execMoveFile({ source, destination }, ctx) {
 }
 
 async function execFindFiles({ pattern, path: searchPath = '.', maxResults = 50 }, ctx) {
-  const { glob } = await import('fs/promises').catch(() => ({}));
   const resolvedDir = resolvePath(searchPath, ctx);
   const max = Math.min(Number(maxResults) || 50, 200);
 
@@ -166,7 +180,7 @@ async function execFindFiles({ pattern, path: searchPath = '.', maxResults = 50 
     proc.on('error', async () => {
       // Fallback: manual recursive walk
       const files = [];
-      async function walk(dir, depth = 0) {
+      async function walk(dir, depth) {
         if (depth > 8 || files.length >= max) return;
         try {
           const entries = await readdir(dir, { withFileTypes: true });
@@ -178,7 +192,7 @@ async function execFindFiles({ pattern, path: searchPath = '.', maxResults = 50 
           }
         } catch {}
       }
-      await walk(resolvedDir);
+      await walk(resolvedDir, 0);
       resolve({ pattern, path: resolvedDir, files, total: files.length });
     });
   });
