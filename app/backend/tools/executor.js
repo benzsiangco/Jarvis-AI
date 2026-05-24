@@ -28,8 +28,13 @@ const LANG_MAP = {
 // Tool definitions — name → { schema, handler }
 const TOOLS = {
   readFile:       { handler: execReadFile },
+  readFiles:      { handler: execReadFiles },      // batch read multiple files
   writeFile:      { handler: execWriteFile },
+  appendFile:     { handler: execAppendFile },     // append to existing file
   patchFile:      { handler: execPatchFile },
+  deleteFile:     { handler: execDeleteFile },     // delete a file
+  moveFile:       { handler: execMoveFile },       // move/rename file or dir
+  findFiles:      { handler: execFindFiles },      // glob pattern search
   searchCode:     { handler: execSearchCode },
   listFiles:      { handler: execListFiles },
   runTerminal:    { handler: execRunTerminal },
@@ -88,6 +93,104 @@ async function execReadFile({ path }, ctx) {
   const content = await readFile(fullPath, 'utf-8');
   const info = await stat(fullPath);
   return { content, size: info.size, path: fullPath };
+}
+
+async function execReadFiles({ paths }, ctx) {
+  if (!Array.isArray(paths) || !paths.length) throw new Error('paths array required');
+  const results = await Promise.all(paths.map(async (p) => {
+    const fullPath = resolvePath(p, ctx);
+    try {
+      const content = await readFile(fullPath, 'utf-8');
+      const info = await stat(fullPath);
+      return { path: fullPath, content, size: info.size, ok: true };
+    } catch (e) {
+      return { path: fullPath, content: null, error: e.message, ok: false };
+    }
+  }));
+  return { files: results, total: results.length, ok: results.filter(r => r.ok).length };
+}
+
+async function execAppendFile({ path, content }, ctx, emit) {
+  const fullPath = resolvePath(path, ctx);
+  const dir = dirname(fullPath);
+  if (dir && dir !== '.' && dir !== '/') {
+    await mkdir(dir, { recursive: true }).catch(() => {});
+  }
+  // Read existing content, append, write back
+  let existing = '';
+  try { existing = await readFile(fullPath, 'utf-8'); } catch {}
+  const newContent = existing + (existing && !existing.endsWith('\n') ? '\n' : '') + (content ?? '');
+  await writeFile(fullPath, newContent, 'utf-8');
+  return { appended: true, path: fullPath, totalSize: newContent.length };
+}
+
+async function execDeleteFile({ path }, ctx, emit) {
+  const fullPath = resolvePath(path, ctx);
+  const { unlink, rmdir } = await import('fs/promises');
+  const info = await stat(fullPath);
+  if (info.isDirectory()) {
+    const { rm } = await import('fs/promises');
+    await rm(fullPath, { recursive: true, force: true });
+    return { deleted: true, path: fullPath, type: 'directory' };
+  }
+  await unlink(fullPath);
+  emit({ type: 'file_edit_done', path: fullPath });
+  return { deleted: true, path: fullPath, type: 'file' };
+}
+
+async function execMoveFile({ source, destination }, ctx) {
+  const { rename } = await import('fs/promises');
+  const srcPath  = resolvePath(source, ctx);
+  const destPath = resolvePath(destination, ctx);
+  const destDir  = dirname(destPath);
+  await mkdir(destDir, { recursive: true }).catch(() => {});
+  await rename(srcPath, destPath);
+  return { moved: true, source: srcPath, destination: destPath };
+}
+
+async function execFindFiles({ pattern, path: searchPath = '.', maxResults = 50 }, ctx) {
+  const { glob } = await import('fs/promises').catch(() => ({}));
+  const resolvedDir = resolvePath(searchPath, ctx);
+  const max = Math.min(Number(maxResults) || 50, 200);
+
+  // Use ripgrep --files with glob if available, otherwise manual walk
+  return new Promise((resolve) => {
+    const args = ['--files', '--glob', pattern, resolvedDir];
+    const proc = spawn('rg', args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    let stdout = '';
+    proc.stdout?.on('data', (d) => { stdout += d; });
+    proc.on('close', () => {
+      const files = stdout.split('\n').filter(Boolean).slice(0, max);
+      resolve({ pattern, path: resolvedDir, files, total: files.length });
+    });
+    proc.on('error', async () => {
+      // Fallback: manual recursive walk
+      const files = [];
+      async function walk(dir, depth = 0) {
+        if (depth > 8 || files.length >= max) return;
+        try {
+          const entries = await readdir(dir, { withFileTypes: true });
+          for (const e of entries) {
+            if (IGNORED.has(e.name) || e.name.startsWith('.')) continue;
+            const full = join(dir, e.name);
+            if (e.isDirectory()) await walk(full, depth + 1);
+            else if (matchGlob(e.name, pattern)) files.push(full);
+          }
+        } catch {}
+      }
+      await walk(resolvedDir);
+      resolve({ pattern, path: resolvedDir, files, total: files.length });
+    });
+  });
+}
+
+function matchGlob(name, pattern) {
+  // Simple glob: * matches anything, ? matches one char, **/ handled by walk
+  const re = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.');
+  return new RegExp('^' + re + '$', 'i').test(name);
 }
 
 function resolvePath(path, ctx) {
@@ -381,8 +484,13 @@ async function execWebFetch({ url, selector }, ctx) {
 function validateArgs(tool, args) {
   const required = {
     readFile:      ['path'],
+    readFiles:     ['paths'],
     writeFile:     ['path', 'content'],
+    appendFile:    ['path', 'content'],
     patchFile:     ['path', 'diff'],
+    deleteFile:    ['path'],
+    moveFile:      ['source', 'destination'],
+    findFiles:     ['pattern'],
     searchCode:    ['query'],
     listFiles:     [],
     runTerminal:    ['command'],
@@ -431,7 +539,10 @@ function checkPermission(tool, args, { mode = 'ask' }) {
 
 function toolEventType(tool) {
   const map = {
-    readFile: 'reading_file', writeFile: 'writing_file', patchFile: 'diff_generation',
+    readFile: 'reading_file', readFiles: 'reading_file',
+    writeFile: 'writing_file', appendFile: 'writing_file',
+    patchFile: 'diff_generation', deleteFile: 'tool_execution', moveFile: 'tool_execution',
+    findFiles: 'searching',
     searchCode: 'searching', listFiles: 'searching', runTerminal: 'running_command',
     openFolder: 'tool_execution', searchInternet: 'searching', webFetch: 'searching',
     spawnAgent: 'planning',
@@ -444,8 +555,13 @@ function toolEventType(tool) {
 function toolStartMessage(tool, args) {
   switch (tool) {
     case 'readFile':     return `Reading ${basename(args.path)}`;
+    case 'readFiles':    return `Reading ${args.paths?.length || 0} files`;
     case 'writeFile':    return `Writing ${basename(args.path)}`;
+    case 'appendFile':   return `Appending to ${basename(args.path)}`;
     case 'patchFile':    return `Patching ${basename(args.path)}`;
+    case 'deleteFile':   return `Deleting ${basename(args.path)}`;
+    case 'moveFile':     return `Moving ${basename(args.source)} → ${basename(args.destination)}`;
+    case 'findFiles':    return `Finding files matching "${args.pattern}"`;
     case 'searchCode':   return `Searching for "${args.query}"`;
     case 'listFiles':    return `Listing ${args.path || 'workspace'}`;
     case 'runTerminal':  return `Running: ${args.command}`;
@@ -468,8 +584,12 @@ function toolDoneMessage(tool, args, result) {
       const lines = (result?.content || '').split('\n').length;
       return `Read ${basename(args.path)} — ${lines} lines`;
     }
+    case 'readFiles':   return `Read ${result?.ok || 0}/${result?.total || 0} files`;
     case 'writeFile':   return `Wrote ${basename(args.path)}`;
+    case 'appendFile':  return `Appended to ${basename(args.path)}`;
     case 'patchFile':   return `Patched ${basename(args.path)}`;
+    case 'deleteFile':  return `Deleted ${basename(args.path)}`;
+    case 'moveFile':    return `Moved to ${basename(args.destination)}`;
     case 'searchCode': {
       const n = result?.results?.length ?? 0;
       return `Found ${n} match${n !== 1 ? 'es' : ''} for "${args.query}"`;

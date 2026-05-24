@@ -28,8 +28,13 @@ IMPORTANT: Use the workspace path provided as the base for ALL file paths. Alway
 
 TOOLS (ONE JSON line, no fences):
 {"tool":"readFile","args":{"path":"<full_absolute_path>"}}
+{"tool":"readFiles","args":{"paths":["<path1>","<path2>"]}}
 {"tool":"writeFile","args":{"path":"<full_absolute_path>","content":"..."}}
+{"tool":"appendFile","args":{"path":"<full_absolute_path>","content":"..."}}
 {"tool":"patchFile","args":{"path":"<full_absolute_path>","diff":"- old\\n+ new"}}
+{"tool":"deleteFile","args":{"path":"<full_absolute_path>"}}
+{"tool":"moveFile","args":{"source":"<src>","destination":"<dst>"}}
+{"tool":"findFiles","args":{"pattern":"*.ts","path":"<dir>"}}
 {"tool":"searchCode","args":{"query":"..."}}
 {"tool":"listFiles","args":{"path":"<full_absolute_path>"}}
 {"tool":"runTerminal","args":{"command":"..."}}
@@ -163,9 +168,9 @@ async function streamLlamaTurn(history) {
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
 const TOOL_NAMES_SET = new Set([
-  'readFile','writeFile','patchFile','searchCode',
-  'listFiles','runTerminal','openFolder','searchInternet','webFetch',
-  'rememberFact','recallMemory','forgetFact',
+  'readFile','readFiles','writeFile','appendFile','patchFile','deleteFile','moveFile',
+  'findFiles','searchCode','listFiles','runTerminal','openFolder',
+  'searchInternet','webFetch','rememberFact','recallMemory','forgetFact',
 ]);
 
 function parseToolCall(text) {
@@ -185,8 +190,13 @@ function formatToolResult(call, result) {
   const r = result.result;
   switch (call.tool) {
     case 'readFile':       return `[TOOL RESULT] File content:\n${r?.content || '(empty)'}`;
+    case 'readFiles':      return `[TOOL RESULT] Files read (${r?.ok}/${r?.total}):\n${(r?.files || []).map(f => f.path + ': ' + (f.ok ? f.content?.slice(0, 500) : 'ERROR: ' + f.error)).join('\n---\n')}`;
     case 'writeFile':      return `[TOOL RESULT] File written: ${r?.path || call.args?.path} (${r?.size || 0} bytes)`;
+    case 'appendFile':     return `[TOOL RESULT] Appended to: ${r?.path || call.args?.path} (total ${r?.totalSize || 0} bytes)`;
     case 'patchFile':      return `[TOOL RESULT] File patched: ${r?.path || call.args?.path} (${r?.linesChanged || 0} lines changed)`;
+    case 'deleteFile':     return `[TOOL RESULT] Deleted: ${r?.path || call.args?.path}`;
+    case 'moveFile':       return `[TOOL RESULT] Moved: ${r?.source} → ${r?.destination}`;
+    case 'findFiles':      return `[TOOL RESULT] Found ${r?.total || 0} files:\n${(r?.files || []).join('\n')}`;
     case 'listFiles':      return `[TOOL RESULT] Files:\n${(r?.items || []).map(i => i.name || i).join('\n')}`;
     case 'searchCode':     return `[TOOL RESULT] Matches:\n${(r?.results || []).map(m => `${m.path}:${m.line}: ${m.text}`).join('\n')}`;
     case 'runTerminal':    return `[TOOL RESULT] Output:\n${r?.output || '(no output)'}`;

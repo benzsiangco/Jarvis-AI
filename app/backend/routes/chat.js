@@ -74,8 +74,13 @@ WRONG — never do these:
 
 runTerminal  → args: { command: string }   — run ANY shell command: curl, npm, git, python, pip, node, etc.
 readFile     → args: { path: string }
+readFiles    → args: { paths: string[] }   — read multiple files at once
 writeFile    → args: { path: string, content: string }
+appendFile   → args: { path: string, content: string }  — append to existing file
 patchFile    → args: { path: string, diff: string }
+deleteFile   → args: { path: string }      — delete file or directory
+moveFile     → args: { source: string, destination: string }  — move or rename
+findFiles    → args: { pattern: string, path?: string }  — glob search e.g. "*.ts", "**/*.jsx"
 searchCode   → args: { query: string }     — ripgrep search in workspace
 listFiles    → args: { path: string }
 searchInternet → args: { query: string, maxResults?: number }  — DuckDuckGo web search
@@ -1474,8 +1479,13 @@ async function buildSystemPrompt(workspacePath) {
 
   prompt += '\n\n=== TOOLS (output ONE JSON per turn, no prose around it) ===\n' +
     `{"tool":"readFile","args":{"path":"..."}}
+{"tool":"readFiles","args":{"paths":["file1","file2"]}}
 {"tool":"writeFile","args":{"path":"...","content":"..."}}
+{"tool":"appendFile","args":{"path":"...","content":"..."}}
 {"tool":"patchFile","args":{"path":"...","diff":"- old\\n+ new"}}
+{"tool":"deleteFile","args":{"path":"..."}}
+{"tool":"moveFile","args":{"source":"...","destination":"..."}}
+{"tool":"findFiles","args":{"pattern":"*.ts","path":"."}}
 {"tool":"searchCode","args":{"query":"...","path":"..."}}
 {"tool":"listFiles","args":{"path":"..."}}
 {"tool":"runTerminal","args":{"command":"..."}}
