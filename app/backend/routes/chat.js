@@ -9,7 +9,7 @@ import { executeTool, TOOL_NAMES } from '../tools/executor.js';
 import { getCustomTools } from './skills.js';
 import { getSystemInstructions } from './settings.js';
 import { getPersonaOverride } from './settings.js';
-import { getMemoryContext } from '../services/memoryService.js';
+import { getMemoryContext, saveMemory } from '../services/memoryService.js';
 import { basename } from 'path';
 import { getActiveProvider, streamProviderChat } from '../services/providerService.js';
 
@@ -233,8 +233,7 @@ Do NOT use any file system or terminal tools. Just talk.`
   if (identityMatch) {
     const name = identityMatch[1].trim();
     try {
-      const { saveMemory } = await import('../services/memoryService.js');
-      await saveMemory({ content: `User's name is ${name}`, tags: ['name'] });
+      await saveMemory({ content: 'User\'s name is ' + name, tags: ['name'] });
     } catch {}
   }
 

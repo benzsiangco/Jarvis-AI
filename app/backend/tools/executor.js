@@ -2,7 +2,7 @@
  * Tool Executor — validates + runs all agent tools safely.
  * The model ONLY requests actions. This layer executes them.
  */
-import { readFile, writeFile, mkdir, readdir, stat, unlink, rename } from 'fs/promises';
+import { readFile, writeFile, mkdir, readdir, stat, unlink, rename, rmdir } from 'fs/promises';
 import { join, basename, extname, dirname, isAbsolute } from 'path';
 import { spawn } from 'child_process';
 import { applyPatch } from './patchApply.js';
@@ -128,14 +128,7 @@ async function execDeleteFile({ path }, ctx, emit) {
   const fullPath = resolvePath(path, ctx);
   const info = await stat(fullPath);
   if (info.isDirectory()) {
-    // Use runTerminal to rmdir recursively — avoids dynamic import issues
-    const { rm } = await import('fs/promises').catch(() => ({}));
-    if (rm) {
-      await rm(fullPath, { recursive: true, force: true });
-    } else {
-      // Fallback for older Node/Bun
-      await rmRecursive(fullPath);
-    }
+    await rmRecursive(fullPath);
     return { deleted: true, path: fullPath, type: 'directory' };
   }
   await unlink(fullPath);
@@ -150,7 +143,6 @@ async function rmRecursive(dir) {
     if (e.isDirectory()) await rmRecursive(p);
     else await unlink(p);
   }
-  const { rmdir } = await import('fs/promises');
   await rmdir(dir);
 }
 
