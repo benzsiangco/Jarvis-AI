@@ -329,8 +329,8 @@ Do NOT use any file system or terminal tools. Just talk.`
         // Covers: "search google", "who is X", "what is X", "how to X", etc.
         const isDirectSearchRequest =
           /^(search|google|look up|find|search for|search google|google for)\b/i.test(lastContent.trim()) ||
-          /^(who|what|when|where|why|how|which)\b.{2,}/i.test(lastContent.trim()) ||
-          /\b(who is|what is|when is|where is|how do|how does|how to|tell me about|latest news|news about|price of|cost of|version of|what are|define|meaning of)\b/i.test(lastContent);
+          /^(who|what|when|where|why|how|which)\b/i.test(lastContent.trim()) ||
+          /\b(who is|what is|when is|where is|how do|how does|how to|tell me about|latest news|news about|price of|cost of|version of|what are|define|meaning of|explain|describe)\b/i.test(lastContent);
 
         const isNotCodingTask = !/\b(create|make|build|write|code|generate|scaffold|init|run|execute|install|npm|pip|git|mkdir|touch|open|start)\b/i.test(lastContent);
         const isNotToolCall = !lastContent.includes('"tool"');
@@ -347,16 +347,19 @@ Do NOT use any file system or terminal tools. Just talk.`
             send('tool_result', { tool: 'searchInternet', result: toolResult, round: 0 });
 
             if (toolResult.success && toolResult.result?.results?.length) {
-              // Let the model synthesize an answer from the search results
-              const resultsText = toolResult.result.results
-                .slice(0, 5)
-                .map((r, i) => (i + 1) + '. ' + r.title + ': ' + r.snippet + ' (' + r.url + ')')
-                .join('\n');
-              const synthHistory = [
-                ...history,
-                { role: 'user', content: 'Web search results for "' + q + '":\n' + resultsText + '\n\nBased on these results, answer the original question concisely in 2-3 sentences.' },
-              ];
-              await agentLoop({ history: synthHistory, context, temperature, max_tokens, send, emit, provider: activeProvider, thinkingMode, agentMode });
+              const results = toolResult.result.results.slice(0, 5);
+              // Format results directly — don't call the model again to avoid context overflow
+              const lines = ['Here is what I found, sir:'];
+              results.forEach((r, i) => {
+                lines.push((i + 1) + '. **' + r.title + '**');
+                if (r.snippet) lines.push('   ' + r.snippet);
+                if (r.url) lines.push('   ' + r.url);
+              });
+              const response = lines.join('\n');
+              send('data', { choices: [{ delta: { content: response } }] });
+              emit({ type: 'done', message: 'Search complete' });
+              try { send('done', {}); } catch {}
+              try { controller.close(); } catch {}
             } else {
               send('data', { choices: [{ delta: { content: 'I searched but found no results for that, sir.' } }] });
               emit({ type: 'done', message: 'Done' });
