@@ -270,10 +270,14 @@ export function cancelDownload(downloadId) {
 /* ── Get current llama.cpp version + detected backend ── */
 export function getCurrentVersion() {
   try {
-    const out = execSync(`"${join(LLAMA_DIR, 'llama-server.exe')}" --version 2>&1`, { encoding: 'utf8', timeout: 5000 });
+    // spawnSync is safer than execSync in compiled Bun binaries
+    const { spawnSync } = require('child_process');
+    const result = spawnSync(join(LLAMA_DIR, 'llama-server.exe'), ['--version'], {
+      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const out = (result.stdout || '') + (result.stderr || '');
     const m = out.match(/version:\s*(\d+)\s*\(([^)]+)\)/);
     if (!m) return null;
-    // Detect backend from DLLs present in llama-cpp/
     let backend = 'cpu';
     try {
       const files = readdirSync(LLAMA_DIR);

@@ -750,7 +750,8 @@ function killLlama(port) {
   if (llamaProcess && llamaProcess.pid) {
     try {
       if (IS_WIN) {
-        execSync(`taskkill /F /T /PID ${llamaProcess.pid}`, { stdio: 'pipe', timeout: 5000 });
+        // Use async spawn to avoid execSync crashes in compiled binary
+        spawn('taskkill', ['/F', '/T', '/PID', String(llamaProcess.pid)], { stdio: 'ignore', windowsHide: true }).on('error', () => {});
       } else {
         try { process.kill(-llamaProcess.pid, 'SIGKILL'); } catch {}
         try { llamaProcess.kill('SIGTERM'); } catch {}
@@ -769,29 +770,33 @@ function killLlama(port) {
 
 /** Kill any process listening on a given port using netstat/Findstr */
 function killPort(port) {
+  // Use async spawn instead of execSync to avoid blocking/crashing in compiled binary
   try {
     if (IS_WIN) {
-      // Use netstat to find ALL PIDs on this port (any state: LISTENING, TIME_WAIT, etc.)
-      const ns = execSync('netstat -ano', { encoding: 'utf8', timeout: 4000 });
-      const killed = new Set();
-      for (const line of ns.split('\n')) {
-        const m = line.match(new RegExp(`[.:]${port}\\s+.*?\\s+(\\d+)\\s*$`));
-        if (!m) continue;
-        const pid = m[1].trim();
-        if (!pid || !/^\d+$/.test(pid)) continue;
-        if (Number(pid) === process.pid) continue;
-        if (killed.has(pid)) continue;
-        killed.add(pid);
-        try {
-          execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'pipe', timeout: 5000 });
-          pushLog('info', `Killed stale process ${pid} on port ${port}`);
-        } catch {}
-      }
+      const proc = spawn('netstat', ['-ano'], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      let ns = '';
+      proc.stdout?.on('data', (d) => { ns += d; });
+      proc.on('close', () => {
+        const killed = new Set();
+        for (const line of ns.split('\n')) {
+          const m = line.match(new RegExp(`[.:]${port}\\s+.*?\\s+(\\d+)\\s*$`));
+          if (!m) continue;
+          const pid = m[1].trim();
+          if (!pid || !/^\d+$/.test(pid)) continue;
+          if (Number(pid) === process.pid) continue;
+          if (killed.has(pid)) continue;
+          killed.add(pid);
+          try {
+            spawn('taskkill', ['/F', '/T', '/PID', pid], { stdio: 'ignore', windowsHide: true });
+          } catch {}
+        }
+      });
+      proc.on('error', () => {}); // ignore errors
     } else {
-      execSync(`lsof -ti:${port} | grep -v ${process.pid} | xargs kill -9 2>/dev/null`, { stdio: 'ignore', timeout: 3000 });
+      spawn('sh', ['-c', `lsof -ti:${port} | grep -v ${process.pid} | xargs kill -9 2>/dev/null`], { stdio: 'ignore' }).on('error', () => {});
     }
   } catch (e) {
-    console.error(`[killPort] port ${port}:`, e.message);
+    // Non-fatal
   }
 }
 
@@ -799,7 +804,9 @@ function killPort(port) {
 // ── Startup cleanup: kill any stale llama-server from a previous crash ──
 // killPort is now defined above, so this runs safely.
 setTimeout(() => {
-  try { killPort(DEFAULT_RUNTIME_SETTINGS.port); } catch {}
+  try { killPort(DEFAULT_RUNTIME_SETTINGS.port); } catch (e) {
+    // Non-fatal — ignore errors during startup cleanup
+  }
 }, 800);
 
 function waitForPortFree(port, maxWait = 15000) {
@@ -816,14 +823,30 @@ function waitForPortFree(port, maxWait = 15000) {
       let portFree = false;
       if (IS_WIN) {
         try {
-          const out = execSync(`netstat -ano | findstr ":${port} "`, { encoding: 'utf8', timeout: 2000 });
-          // Only consider it occupied if there's a LISTENING or ESTABLISHED line
-          portFree = !out.split('\n').some(l => /LISTENING|ESTABLISHED/.test(l) && l.includes(`:${port} `));
+          // Use async spawn instead of execSync to avoid crashes in compiled binary
+          portFree = await new Promise((res) => {
+            const p = spawn('netstat', ['-ano'], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+            let out = '';
+            p.stdout?.on('data', (d) => { out += d; });
+            p.on('close', () => {
+              const occupied = out.split('\n').some(l => /LISTENING|ESTABLISHED/.test(l) && l.includes(`:${port} `));
+              res(!occupied);
+            });
+            p.on('error', () => res(true)); // assume free on error
+            setTimeout(() => res(true), 2000); // timeout = assume free
+          });
         } catch {
-          portFree = true; // findstr returns exit 1 when no match = port is free
+          portFree = true;
         }
       } else {
-        try { execSync(`lsof -i:${port}`, { stdio: 'ignore', timeout: 2000 }); } catch { portFree = true; }
+        try {
+          portFree = await new Promise((res) => {
+            const p = spawn('lsof', [`-i:${port}`], { stdio: 'ignore' });
+            p.on('close', (code) => res(code !== 0));
+            p.on('error', () => res(true));
+            setTimeout(() => res(true), 2000);
+          });
+        } catch { portFree = true; }
       }
 
       if (!portFree) return setTimeout(check, 600);

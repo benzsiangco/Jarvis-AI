@@ -167,3 +167,11 @@ async function getHealth() {
 }
 
 console.log(`[JARVIS Backend] Running on http://localhost:${PORT}`);
+
+// Prevent unhandled promise rejections from crashing the server
+process.on('unhandledRejection', (reason) => {
+  console.error('[JARVIS] Unhandled rejection (non-fatal):', reason?.message || reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[JARVIS] Uncaught exception (non-fatal):', err?.message || err);
+});
