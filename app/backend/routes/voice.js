@@ -228,6 +228,8 @@ export async function voiceRoute(req, url) {
         if (setupState === 'error') {
           broadcastSetup({ event: 'error', name: 'process', message: `Process exited with code ${code}` });
         }
+        // Reset Supertonic auto-start flag so it retries after install
+        if (setupState === 'done') supertonicStarted = false;
         broadcastSetup({ event: 'state', status: setupState });
       }
     }).catch(() => {});
@@ -271,6 +273,39 @@ async function transcribeLocal(req) {
 
 /* ── Supertonic TTS ──────────────────────────────────────────────────── */
 
+// Track if we've already tried to auto-start Supertonic
+let supertonicStarted = false;
+
+async function ensureSupertonic() {
+  // Already reachable
+  try {
+    const r = await fetch(`${SUPERTONIC_URL}/health`, { signal: AbortSignal.timeout(1500) });
+    if (r.ok) return true;
+  } catch {}
+
+  if (supertonicStarted) return false; // already tried, don't spam
+  supertonicStarted = true;
+
+  // Try to start supertonic serve
+  const pythonCmds = ['python', 'python3', 'py'];
+  for (const py of pythonCmds) {
+    try {
+      Bun.spawn([py, '-m', 'supertonic', 'serve', '--host', '127.0.0.1', '--port', '7788'], {
+        stdout: 'ignore',
+        stderr: 'ignore',
+        stdin: null,
+        windowsHide: true,
+      });
+      // Give it 3s to start
+      await new Promise((r) => setTimeout(r, 3000));
+      const check = await fetch(`${SUPERTONIC_URL}/health`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
+      if (check?.ok) return true;
+      break;
+    } catch {}
+  }
+  return false;
+}
+
 async function speakSupertonic(req) {
   let body;
   try { body = await req.json(); }
@@ -283,8 +318,15 @@ async function speakSupertonic(req) {
 
   if (!text) return Response.json({ error: 'text required' }, { status: 400 });
 
+  // Auto-start Supertonic if not running
+  const ready = await ensureSupertonic();
+  if (!ready) {
+    return Response.json({
+      error: 'Supertonic TTS is not running. Go to Settings → Voice Setup and install voice dependencies first.',
+    }, { status: 503 });
+  }
+
   try {
-    // Use OpenAI-compatible endpoint from supertonic serve
     const res = await fetch(`${SUPERTONIC_URL}/v1/audio/speech`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -300,6 +342,7 @@ async function speakSupertonic(req) {
       headers: { 'Content-Type': 'audio/wav' },
     });
   } catch (e) {
+    supertonicStarted = false; // allow retry next time
     return Response.json({ error: `Supertonic TTS unreachable: ${e.message}` }, { status: 503 });
   }
 }

@@ -5,11 +5,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 export const PACKAGES_META = [
-  { name: 'faster-whisper',    label: 'faster-whisper (STT engine)', size: '~50 MB', size_mb: 50 },
-  { name: 'fastapi',           label: 'FastAPI (web server)',         size: '~5 MB',  size_mb: 5  },
-  { name: 'uvicorn[standard]', label: 'Uvicorn (ASGI server)',        size: '~3 MB',  size_mb: 3  },
-  { name: 'python-multipart',  label: 'python-multipart (upload)',    size: '~1 MB',  size_mb: 1  },
-  { name: 'edge-tts',          label: 'edge-tts (TTS engine)',        size: '~2 MB',  size_mb: 2  },
+  { name: 'faster-whisper',    label: 'faster-whisper (STT engine)',  size: '~50 MB',  size_mb: 50  },
+  { name: 'fastapi',           label: 'FastAPI (web server)',          size: '~5 MB',   size_mb: 5   },
+  { name: 'uvicorn[standard]', label: 'Uvicorn (ASGI server)',         size: '~3 MB',   size_mb: 3   },
+  { name: 'python-multipart',  label: 'python-multipart (upload)',     size: '~1 MB',   size_mb: 1   },
+  { name: 'supertonic[serve]', label: 'Supertonic TTS (on-device)',    size: '~120 MB', size_mb: 120 },
 ];
 
 function makePackages(selected = null) {

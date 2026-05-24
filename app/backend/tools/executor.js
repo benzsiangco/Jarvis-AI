@@ -248,7 +248,7 @@ async function execSearchImages({ query, maxResults }, ctx) {
   if (!query) throw new Error('query is required');
   const count = Math.min(Math.max(Number(maxResults) || 10, 1), 20);
 
-  // Strategy 1: Google Images via scraping (most reliable for people/places/things)
+  // Strategy 1: Google Images
   try {
     const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch&num=${count}&safe=active`;
     const res = await fetch(url, {
@@ -262,48 +262,26 @@ async function execSearchImages({ query, maxResults }, ctx) {
     });
     if (!res.ok) throw new Error(`Google HTTP ${res.status}`);
     const html = await res.text();
-
-    // Extract image URLs from Google's JSON data blobs
     const results = [];
-    // Pattern 1: AF_initDataCallback with image data
     const jsonBlocks = html.matchAll(/\["(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp|gif)[^"]*)",(\d+),(\d+)\]/gi);
     for (const m of jsonBlocks) {
       if (results.length >= count) break;
       const imgUrl = m[1];
       if (imgUrl.includes('gstatic') || imgUrl.includes('google.com')) continue;
-      results.push({
-        url: imgUrl,
-        thumb: imgUrl,
-        title: query,
-        source: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
-        width: parseInt(m[2]) || null,
-        height: parseInt(m[3]) || null,
-      });
+      results.push({ url: imgUrl, thumb: imgUrl, title: query, source: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`, width: parseInt(m[2]) || null, height: parseInt(m[3]) || null });
     }
-
-    // Pattern 2: ou":"URL" format in Google's data
     if (results.length < 3) {
-      const ouMatches = html.matchAll(/"ou":"(https?:\/\/[^"]+)"/g);
-      for (const m of ouMatches) {
+      for (const m of html.matchAll(/"ou":"(https?:\/\/[^"]+)"/g)) {
         if (results.length >= count) break;
         const imgUrl = m[1].replace(/\\u003d/g, '=').replace(/\\u0026/g, '&');
         if (!imgUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) continue;
-        results.push({
-          url: imgUrl,
-          thumb: imgUrl,
-          title: query,
-          source: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
-          width: null,
-          height: null,
-        });
+        results.push({ url: imgUrl, thumb: imgUrl, title: query, source: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`, width: null, height: null });
       }
     }
-
     if (results.length >= 3) return { query, images: results.slice(0, count), total: results.length, source: 'google' };
-    throw new Error(`Only ${results.length} Google results`);
-  } catch (googleErr) {
+  } catch {}
 
-  // Strategy 2: Bing Images scraping
+  // Strategy 2: Bing Images
   try {
     const url = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&count=${count}&safeSearch=Moderate`;
     const res = await fetch(url, {
@@ -316,94 +294,46 @@ async function execSearchImages({ query, maxResults }, ctx) {
     });
     if (!res.ok) throw new Error(`Bing HTTP ${res.status}`);
     const html = await res.text();
-
     const results = [];
-    // Bing stores image data in murl attribute
-    const murlRe = /murl&quot;:&quot;(https?:\/\/[^&"]+)&quot;/g;
     let m;
+    const murlRe = /murl&quot;:&quot;(https?:\/\/[^&"]+)&quot;/g;
     while ((m = murlRe.exec(html)) !== null && results.length < count) {
-      const imgUrl = m[1];
-      if (!imgUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) continue;
-      results.push({
-        url: imgUrl,
-        thumb: imgUrl,
-        title: query,
-        source: `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
-        width: null,
-        height: null,
-      });
+      if (m[1].match(/\.(jpg|jpeg|png|webp|gif)/i)) results.push({ url: m[1], thumb: m[1], title: query, source: `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`, width: null, height: null });
     }
-
-    // Also try the JSON format Bing uses
     if (results.length < 3) {
       const jsonRe = /"murl":"(https?:\/\/[^"]+)"/g;
       while ((m = jsonRe.exec(html)) !== null && results.length < count) {
-        const imgUrl = m[1];
-        if (!imgUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) continue;
-        results.push({
-          url: imgUrl,
-          thumb: imgUrl,
-          title: query,
-          source: `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
-          width: null,
-          height: null,
-        });
+        if (m[1].match(/\.(jpg|jpeg|png|webp|gif)/i)) results.push({ url: m[1], thumb: m[1], title: query, source: `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`, width: null, height: null });
       }
     }
-
     if (results.length >= 3) return { query, images: results.slice(0, count), total: results.length, source: 'bing' };
-    throw new Error(`Only ${results.length} Bing results`);
-  } catch (bingErr) {
+  } catch {}
 
-  // Strategy 3: Openverse (creative commons — good for generic subjects)
+  // Strategy 3: Openverse
   try {
     const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&page_size=${count}&license_type=commercial,modification`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'JarvisAI/1.0 (https://github.com/benzsiangco/Jarvis-AI)' },
-      signal: AbortSignal.timeout(10000),
-    });
+    const res = await fetch(url, { headers: { 'User-Agent': 'JarvisAI/1.0' }, signal: AbortSignal.timeout(10000) });
     if (!res.ok) throw new Error(`Openverse HTTP ${res.status}`);
     const data = await res.json();
-    const results = (data.results || []).slice(0, count).map((r) => ({
-      url: r.url,
-      thumb: r.thumbnail || r.url,
-      title: r.title || r.creator || query,
-      source: r.foreign_landing_url || r.url,
-      width: r.width || null,
-      height: r.height || null,
-    })).filter((r) => r.url?.startsWith('http'));
-
+    const results = (data.results || []).slice(0, count).map((r) => ({ url: r.url, thumb: r.thumbnail || r.url, title: r.title || r.creator || query, source: r.foreign_landing_url || r.url, width: r.width || null, height: r.height || null })).filter((r) => r.url?.startsWith('http'));
     if (results.length >= 2) return { query, images: results, total: results.length, source: 'openverse' };
-    throw new Error(`Only ${results.length} Openverse results`);
-  } catch (openverseErr) {
+  } catch {}
 
   // Strategy 4: Wikimedia Commons
   try {
     const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=${count}&prop=imageinfo&iiprop=url|thumburl&iiurlwidth=600&format=json&origin=*`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'JarvisAI/1.0' },
-      signal: AbortSignal.timeout(10000),
-    });
+    const res = await fetch(url, { headers: { 'User-Agent': 'JarvisAI/1.0' }, signal: AbortSignal.timeout(10000) });
     if (!res.ok) throw new Error(`Wikimedia HTTP ${res.status}`);
     const data = await res.json();
     const pages = Object.values(data.query?.pages || {});
     const results = pages.slice(0, count).map((p) => {
       const info = p.imageinfo?.[0] || {};
-      return {
-        url: info.url || '',
-        thumb: info.thumburl || info.url || '',
-        title: p.title?.replace(/^File:/, '') || query,
-        source: `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}`,
-        width: null,
-        height: null,
-      };
+      return { url: info.url || '', thumb: info.thumburl || info.url || '', title: p.title?.replace(/^File:/, '') || query, source: `https://commons.wikimedia.org/wiki/${encodeURIComponent(p.title || '')}`, width: null, height: null };
     }).filter((r) => r.url?.startsWith('http'));
-
     if (results.length > 0) return { query, images: results, total: results.length, source: 'wikimedia' };
-    throw new Error('No Wikimedia results');
-  } catch (wikiErr) {
-    throw new Error(`Image search failed — Google: ${googleErr.message} | Bing: ${bingErr.message} | Openverse: ${openverseErr.message} | Wikimedia: ${wikiErr.message}`);
-  }}}}}
+  } catch {}
+
+  throw new Error(`Image search failed — no results from Google, Bing, Openverse, or Wikimedia`);
 }
 
 async function execWebFetch({ url, selector }, ctx) {
