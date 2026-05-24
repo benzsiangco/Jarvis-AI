@@ -2,9 +2,12 @@ import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { homedir } from 'os';
+import { getProjectRoot } from '../utils/root.js';
 
-const BACKEND_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
-const DB_PATH = process.env.JARVIS_DB_PATH || join(BACKEND_DIR, 'data', 'jarvis.sqlite');
+// Use JARVIS_ROOT-based path so compiled binary works without env vars
+const ROOT = getProjectRoot();
+const DB_PATH = process.env.JARVIS_DB_PATH || join(ROOT, 'data', 'jarvis.sqlite');
 
 mkdirSync(dirname(DB_PATH), { recursive: true });
 
