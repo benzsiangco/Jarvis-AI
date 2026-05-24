@@ -254,21 +254,30 @@ Do NOT use any file system or terminal tools. Just talk.`
   }
 
   // ── Auto-inject searchInternet for knowledge/factual questions ──────────────
-  // Small models answer from training data. Force a search for factual questions.
-  const isKnowledgeQuestion = (
-    /^(who|what|when|where|why|how|which|is|are|was|were|does|did|can|will|has|have)\b/i.test(lastContent.trim()) ||
-    /\b(search|look up|find out|tell me about|explain|define|meaning of|latest|current|recent|news|price|cost|version|release|update|review|best|top|compare)\b/i.test(lastContent)
+  // Detect search intent and inject a FORCED tool call — don't rely on the model
+  // to decide. Small models consistently refuse to search.
+  const isSearchRequest = /^(search|google|look up|find|search for|search google|google for)\b/i.test(lastContent.trim());
+
+  const isKnowledgeQuestion = !isSearchRequest && (
+    /^(who|what|when|where|why|how|which)\b/i.test(lastContent.trim()) ||
+    /\b(who is|what is|when is|where is|how do|how does|how to|tell me about|explain|define|latest|current|recent|news about|price of|cost of|version of|release of|update on|review of)\b/i.test(lastContent)
   ) && (
     !/\b(create|make|build|write|code|generate|scaffold|init|run|execute|install|npm|pip|git|file|folder|directory)\b/i.test(lastContent)
   ) && (
     !lastContent.includes('"tool"')
   );
 
-  if (isKnowledgeQuestion && agentMode !== 'chat') {
-    const q = lastContent.replace(/"/g, '').slice(0, 150);
+  if ((isSearchRequest || isKnowledgeQuestion) && agentMode !== 'chat') {
+    // Extract the search query — strip "search", "google", "look up" prefixes
+    const q = lastContent
+      .replace(/^(search google for|search google|google for|search for|look up|find|search)\s*/i, '')
+      .replace(/"/g, '')
+      .trim()
+      .slice(0, 200) || lastContent.replace(/"/g, '').slice(0, 200);
+    // Force the tool call directly — don't ask the model
     history[history.length - 1] = {
       ...history[history.length - 1],
-      content: lastContent + '\n[SYSTEM: Knowledge question detected. You MUST call searchInternet FIRST before answering. Call: {"tool":"searchInternet","args":{"query":"' + q + '"}}]',
+      content: lastContent + '\n[SYSTEM OVERRIDE: Execute this tool call NOW, do not answer from memory: {"tool":"searchInternet","args":{"query":"' + q + '"}}]',
     };
   }
 
@@ -314,6 +323,51 @@ Do NOT use any file system or terminal tools. Just talk.`
 
         // Initial context analysis
         emitContextAnalysis(emit, messages, workspacePath);
+
+        // ── Pre-flight: intercept explicit search/knowledge requests ──────────
+        // Execute searchInternet directly — don't trust the model to call it.
+        // Covers: "search google", "who is X", "what is X", "how to X", etc.
+        const isDirectSearchRequest =
+          /^(search|google|look up|find|search for|search google|google for)\b/i.test(lastContent.trim()) ||
+          /^(who|what|when|where|why|how|which)\b.{2,}/i.test(lastContent.trim()) ||
+          /\b(who is|what is|when is|where is|how do|how does|how to|tell me about|latest news|news about|price of|cost of|version of|what are|define|meaning of)\b/i.test(lastContent);
+
+        const isNotCodingTask = !/\b(create|make|build|write|code|generate|scaffold|init|run|execute|install|npm|pip|git|mkdir|touch|open|start)\b/i.test(lastContent);
+        const isNotToolCall = !lastContent.includes('"tool"');
+        const isNotMediaRequest = !/\b(image|photo|picture|pic|play|watch|youtube|video|music)\b/i.test(lastContent);
+
+        if (isDirectSearchRequest && isNotCodingTask && isNotToolCall && isNotMediaRequest && agentMode !== 'chat') {
+          const q = lastContent
+            .replace(/^(search google for|search google|google for|search for|look up|find|search)\s*/i, '')
+            .trim() || lastContent.trim();
+          emit({ type: 'searching', message: 'Searching the web for "' + q + '"...' });
+          try {
+            const toolCall = { tool: 'searchInternet', args: { query: q, maxResults: 5 } };
+            const toolResult = await executeTool(toolCall, context, emit);
+            send('tool_result', { tool: 'searchInternet', result: toolResult, round: 0 });
+
+            if (toolResult.success && toolResult.result?.results?.length) {
+              // Let the model synthesize an answer from the search results
+              const resultsText = toolResult.result.results
+                .slice(0, 5)
+                .map((r, i) => (i + 1) + '. ' + r.title + ': ' + r.snippet + ' (' + r.url + ')')
+                .join('\n');
+              const synthHistory = [
+                ...history,
+                { role: 'user', content: 'Web search results for "' + q + '":\n' + resultsText + '\n\nBased on these results, answer the original question concisely in 2-3 sentences.' },
+              ];
+              await agentLoop({ history: synthHistory, context, temperature, max_tokens, send, emit, provider: activeProvider, thinkingMode, agentMode });
+            } else {
+              send('data', { choices: [{ delta: { content: 'I searched but found no results for that, sir.' } }] });
+              emit({ type: 'done', message: 'Done' });
+              try { send('done', {}); } catch {}
+              try { controller.close(); } catch {}
+            }
+            return;
+          } catch (e) {
+            // Fall through to normal agent loop
+          }
+        }
 
         // ── Pre-flight: intercept image search requests ──
         const isImageRequest = /\b(show|find|search|display|get|give me|look up)\b.{0,30}\b(image|photo|picture|pic|wallpaper|screenshot)s?\b/i.test(lastContent)
