@@ -75,7 +75,12 @@ export default function VoiceSettings({ backendUrl }) {
       </div>
       {(!health?.stt || !health?.tts) && (
         <div style={{ fontSize: 11, color: '#fbbf24', padding: '6px 10px', borderRadius: 7, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
-          ⚠️ Go to <strong>Voice Setup</strong> to install dependencies and start the voice services.
+          {!health?.tts && (
+            <div>⚠️ <strong>Supertonic TTS</strong> is not running — using browser TTS as fallback. Go to <strong>Voice Setup</strong> to install and start it.</div>
+          )}
+          {!health?.stt && (
+            <div>⚠️ <strong>STT (Whisper)</strong> is not running. Go to <strong>Voice Setup</strong> to install and start it.</div>
+          )}
         </div>
       )}
 

@@ -277,6 +277,48 @@ async function transcribeLocal(req) {
 let supertonicStarted = false;
 let supertonicProc = null;
 
+async function findPythonWithSupertonic() {
+  // Try all known Python locations to find one that has supertonic installed
+  const pythonCmds = ['python', 'python3', 'py'];
+
+  // Also check common user install paths on Windows
+  const userPaths = [];
+  try {
+    const home = process.env.USERPROFILE || process.env.HOME || '';
+    if (home) {
+      userPaths.push(
+        `${home}\\.pyenv\\pyenv-win\\versions\\3.11.9\\python.exe`,
+        `${home}\\.pyenv\\pyenv-win\\versions\\3.12.0\\python.exe`,
+        `${home}\\.pyenv\\pyenv-win\\versions\\3.10.11\\python.exe`,
+        `${home}\\AppData\\Local\\Programs\\Python\\Python311\\python.exe`,
+        `${home}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe`,
+        `${home}\\AppData\\Local\\Programs\\Python\\Python310\\python.exe`,
+        `${home}\\AppData\\Local\\Python\\bin\\python.exe`,
+      );
+    }
+  } catch {}
+
+  const allCmds = [...pythonCmds, ...userPaths];
+
+  for (const py of allCmds) {
+    try {
+      const check = Bun.spawn([py, '-c', 'import supertonic; print("ok")'], {
+        stdout: 'pipe', stderr: 'ignore', stdin: null, windowsHide: true,
+      });
+      const out = await new Promise((resolve) => {
+        let buf = '';
+        (async () => {
+          for await (const chunk of check.stdout) buf += new TextDecoder().decode(chunk);
+          resolve(buf.trim());
+        })().catch(() => resolve(''));
+        setTimeout(() => resolve(''), 5000);
+      });
+      if (out === 'ok') return py;
+    } catch {}
+  }
+  return null;
+}
+
 async function ensureSupertonic() {
   // Already reachable
   try {
@@ -286,7 +328,7 @@ async function ensureSupertonic() {
 
   if (supertonicStarted) {
     // Already tried — wait a bit longer in case it's still starting
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 3000));
     try {
       const r = await fetch(`${SUPERTONIC_URL}/health`, { signal: AbortSignal.timeout(2000) });
       if (r.ok) return true;
@@ -295,32 +337,38 @@ async function ensureSupertonic() {
   }
   supertonicStarted = true;
 
-  // Try multiple ways to start supertonic serve
-  const pythonCmds = ['python', 'python3', 'py'];
   const port = '7788';
 
-  for (const py of pythonCmds) {
-    // Try: python -m supertonic serve
+  // Find the Python that actually has supertonic installed
+  const py = await findPythonWithSupertonic();
+
+  if (py) {
     try {
       supertonicProc = Bun.spawn([py, '-m', 'supertonic', 'serve', '--host', '127.0.0.1', '--port', port], {
         stdout: 'ignore', stderr: 'ignore', stdin: null, windowsHide: true,
       });
-      await new Promise((r) => setTimeout(r, 4000));
-      const check = await fetch(`${SUPERTONIC_URL}/health`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
-      if (check?.ok) return true;
+      // Wait up to 8s for it to start (first run downloads model)
+      for (let i = 0; i < 8; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        try {
+          const check = await fetch(`${SUPERTONIC_URL}/health`, { signal: AbortSignal.timeout(1000) }).catch(() => null);
+          if (check?.ok) return true;
+        } catch {}
+      }
     } catch {}
+  }
 
-    // Try: supertonic serve (if installed as a script)
+  // Also try the supertonic CLI script directly
+  const scriptCmds = ['supertonic', 'supertonic.exe'];
+  for (const cmd of scriptCmds) {
     try {
-      supertonicProc = Bun.spawn(['supertonic', 'serve', '--host', '127.0.0.1', '--port', port], {
+      supertonicProc = Bun.spawn([cmd, 'serve', '--host', '127.0.0.1', '--port', port], {
         stdout: 'ignore', stderr: 'ignore', stdin: null, windowsHide: true,
       });
       await new Promise((r) => setTimeout(r, 4000));
       const check = await fetch(`${SUPERTONIC_URL}/health`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
       if (check?.ok) return true;
     } catch {}
-
-    break; // only try first working python
   }
 
   supertonicStarted = false; // allow retry
