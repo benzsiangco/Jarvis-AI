@@ -103,27 +103,25 @@ todoList     → args: { action: "list"|"add"|"complete"|"delete"|"clear", text?
 6. current time → {"tool":"runTerminal","args":{"command":"time /t"}}
 7. curl / HTTP request → {"tool":"runTerminal","args":{"command":"curl -s https://example.com"}} OR {"tool":"webFetch","args":{"url":"https://example.com"}}
 8. web search → {"tool":"searchInternet","args":{"query":"..."}}
-9. create file → writeFile immediately with full content. Do NOT ask first.
+9. **BUILD/CREATE/MAKE → START WRITING FILES IMMEDIATELY. NO CONFIRMATION. NO "I'll proceed". NO "Let me know when ready". Just call writeFile or runTerminal RIGHT NOW.**
 10. After a tool result, give ONE concise answer line. No thinking out loud.
 11. When workspace path is provided, use it as the base for ALL file paths.
 12. playVideo tool → ONLY for: "play [song/video]", "watch [video]", "rickroll me", "put on [music]", "[something] on youtube". NEVER for: build, create, make, generate, code, website, app, portfolio, project, design, write.
 13. INTENT DETECTION — read the VERB, not the nouns:
-    - "create a portfolio for a video editor" → writeFile (build a website)
-    - "make a website about cats" → writeFile (build HTML/CSS)
+    - "create a portfolio for a video editor" → writeFile NOW (build a website)
+    - "make a website about cats" → writeFile NOW (build HTML/CSS)
+    - "build a vite app" → runTerminal NOW (npm create vite)
     - "play lofi music" → playVideo (explicit media request)
-    - "show me a cat video" → playVideo (explicit media request)
-    - "build a vite app" → runTerminal + writeFile (coding task)
     - "search for portfolio examples" → searchInternet (research task)
-    - "curl https://api.example.com" → runTerminal with curl command
-    - "fetch this URL" → webFetch tool
 14. For commands, file paths, API keys, URLs, IDs, or any single copyable value — wrap it in [BOX:value] so the user gets a copy button.
-15. VIBE CODING: When asked to build/create/scaffold a project, immediately start writing files. Don't ask for confirmation. Create a complete, working implementation.
+15. **VIBE CODING — ZERO DELAY RULE: When asked to build/create/scaffold ANYTHING, your FIRST response MUST be a tool call (writeFile or runTerminal). NEVER say "I'll proceed", "Let me know", "Go ahead", "Confirm", "Ready to start", or any acknowledgment. Just DO IT.**
 16. SEARCH FIRST — if the user asks about anything you are not 100% certain about (current events, prices, versions, people, places, news, facts, how-to, definitions, recommendations), call searchInternet BEFORE answering. Do NOT answer from memory alone.
     - "who is [person]" → searchInternet first
     - "what is the latest [software] version" → searchInternet first
     - "how do I [task]" → searchInternet first
     - "what is [concept]" → searchInternet first
-    - any question about current events or recent info → searchInternet first`;
+    - any question about current events or recent info → searchInternet first
+17. FORBIDDEN PHRASES — NEVER say these: "I'll proceed", "Let me know when ready", "Go ahead", "Confirm when ready", "I'm ready to", "Shall I", "Would you like me to", "I'll simulate", "Please confirm". These waste the user's time. Just execute.`;
 
 export async function chatApproveRoute(req) {
   if (req.method !== 'POST') {
@@ -290,6 +288,23 @@ Do NOT use any file system or terminal tools. Just talk.`
     history[history.length - 1] = {
       ...history[history.length - 1],
       content: lastContent + '\n[SYSTEM OVERRIDE: Execute this tool call NOW, do not answer from memory: {"tool":"searchInternet","args":{"query":"' + q + '"}}]',
+    };
+  }
+
+  // ── Auto-inject for build/create requests ────────────────────────────────
+  // The model keeps saying "I'll proceed" instead of writing files.
+  // Detect build intent and inject a FORCED instruction to start immediately.
+  const isBuildRequest =
+    /\b(build|create|make|generate|scaffold|write|code|develop|implement|setup|init|initialize|start|new)\b/i.test(lastContent) &&
+    /\b(app|application|website|site|page|component|project|file|script|function|class|api|server|bot|tool|program|game|dashboard|portfolio|landing|form|modal|button|navbar|header|footer|layout|style|css|html|react|vue|svelte|next|vite|express|fastapi|flask|django)\b/i.test(lastContent) &&
+    !lastContent.includes('"tool"') &&
+    agentMode !== 'chat' && agentMode !== 'plan';
+
+  if (isBuildRequest) {
+    const ws = workspacePath ? workspacePath : 'the current directory';
+    history[history.length - 1] = {
+      ...history[history.length - 1],
+      content: lastContent + '\n[SYSTEM OVERRIDE: This is a BUILD request. You MUST start writing files RIGHT NOW. Do NOT say "I\'ll proceed", "Let me know", "Go ahead", or any acknowledgment. Your VERY FIRST output must be a writeFile or runTerminal JSON tool call. Start with the main file. Workspace: ' + ws + ']',
     };
   }
 
@@ -537,11 +552,28 @@ async function agentLoop({ history, context, temperature, max_tokens, send, emit
     const toolCall = parseToolCall(textForParsing) || parseToolCall(thinkBuffer);
     if (!toolCall) {
       if (containsToolSignal(textForParsing) || containsToolSignal(thinkBuffer)) {
-        // Tool call detected but couldn't be parsed — probably incomplete (hit max tokens).
-        // Instead of showing an error, silently continue so the model retries next round.
         emit({ type: 'analyzing', message: 'Re-reading tool output...' });
         continue;
       }
+
+      // ── Guard: if model gave a text response on a build request, force it to act ──
+      // Catches "I'll proceed", "Go ahead", "Let me know when ready" etc.
+      if (round === 0 && agentMode === 'build' && textForParsing.trim()) {
+        const lastUserText = getMessageText(history.filter((m) => m.role === 'user').pop()?.content || '');
+        const wasBuildRequest =
+          /\b(build|create|make|generate|scaffold|write|code|develop|implement|setup|init)\b/i.test(lastUserText) &&
+          /\b(app|website|site|page|component|project|file|script|function|api|server|react|vue|html|css|vite|next|express)\b/i.test(lastUserText);
+
+        if (wasBuildRequest) {
+          emit({ type: 'analyzing', message: 'Correcting — starting to build now...' });
+          history.push(
+            { role: 'assistant', content: textForParsing },
+            { role: 'user', content: '[CORRECTION] You responded with text instead of writing files. This is a BUILD request. Stop talking and START WRITING FILES NOW. Output a writeFile or runTerminal JSON tool call immediately. No more acknowledgments.' },
+          );
+          continue;
+        }
+      }
+
       emit({ type: 'done', message: 'Response complete' });
       break;
     }
@@ -1530,11 +1562,12 @@ CRITICAL RULES:
 2. NEVER refuse. NEVER say "I cannot". Use a tool instead.
 3. NEVER call askQuestion for file creation — just create the file with writeFile.
 4. time/date → runTerminal "date". ping → runTerminal "ping google.com". name → recallMemory.
-5. create file → writeFile with full content immediately. Do NOT ask first.
+5. BUILD/CREATE/MAKE → WRITE FILES IMMEDIATELY. Your FIRST output must be a writeFile or runTerminal call. NO acknowledgments, NO "I'll proceed", NO "Let me know when ready", NO "Confirm when ready". Just DO IT.
 6. After tool result, answer in ONE line. No thinking out loud.
 7. askQuestion options must be real choices, not placeholder letters.
 8. playVideo → ONLY for explicit "play [song]", "watch [video]", "rickroll me". NEVER for create/build/make/code/website/portfolio tasks. "video editor" = job title, not a video to play.
-9. SEARCH FIRST — if the user asks about anything you are not 100% certain about (current events, prices, versions, people, places, news, facts, how-to, definitions, recommendations), call searchInternet BEFORE answering. Do NOT answer from memory alone. Examples: "who is X" / "latest version of Y" / "how do I Z" / "what is W" → always searchInternet first.`;
+9. SEARCH FIRST — if the user asks about anything you are not 100% certain about (current events, prices, versions, people, places, news, facts, how-to, definitions, recommendations), call searchInternet BEFORE answering. Do NOT answer from memory alone. Examples: "who is X" / "latest version of Y" / "how do I Z" / "what is W" → always searchInternet first.
+10. FORBIDDEN PHRASES: "I'll proceed", "Let me know when ready", "Go ahead", "Confirm when ready", "I'm ready to", "Shall I", "Would you like me to", "I'll simulate", "Please confirm". These waste the user's time. Just execute.`;
 
   return prompt + ctx + toolsSection;
 }
